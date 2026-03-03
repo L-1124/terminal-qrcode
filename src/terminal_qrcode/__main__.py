@@ -5,7 +5,7 @@ import logging
 import os
 import sys
 
-from terminal_qrcode import DrawOutput, draw
+from terminal_qrcode import draw
 
 
 def main():
@@ -117,13 +117,9 @@ def main():
             img_width=args.img_width,
             tmux_passthrough=args.tmux_passthrough,
         )
-        if isinstance(output, DrawOutput):
-            text = str(output)
-        else:
-            text = "".join(output)
-        sys.stdout.write(text)
+
+        sys.stdout.write(str(output))
         sys.stdout.flush()
-        sys.stdout.write("\n")
     except BrokenPipeError:
         # 针对 Unix 下的 | head -n 1 等场景，优雅退出
         devnull = os.open(os.devnull, os.O_WRONLY)
