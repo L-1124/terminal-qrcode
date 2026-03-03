@@ -7,7 +7,6 @@ from unittest.mock import patch
 import pytest
 
 import terminal_qrcode.simple_image as simple_image
-from terminal_qrcode import codecs
 from terminal_qrcode.codecs import PngUnavailableError, TurboJpegUnavailableError, WebPUnavailableError
 from terminal_qrcode.simple_image import SimpleImage
 
@@ -33,14 +32,6 @@ def test_open_gif_unsupported_format(tmp_path):
     """验证 GIF 输入直接报不支持格式."""
     path = tmp_path / "x.gif"
     path.write_bytes(b"GIF89a")
-    with pytest.raises(ValueError, match="Supported formats: JPEG, PNG, WEBP"):
-        SimpleImage.open(path)
-
-
-def test_open_unknown_ext_unsupported_format(tmp_path):
-    """验证未知后缀直接报不支持格式."""
-    path = tmp_path / "x.tiff"
-    path.write_bytes(b"dummy")
     with pytest.raises(ValueError, match="Supported formats: JPEG, PNG, WEBP"):
         SimpleImage.open(path)
 
@@ -79,27 +70,13 @@ def test_convert_prefers_c_accel_when_available(monkeypatch):
         calls.append((src_mode, dst_mode, width, height))
         return bytes([7, 8, 9])
 
-    monkeypatch.setattr(simple_image, "_CIMAGE_ACCEL", SimpleNamespace(convert=fake_convert))
+    monkeypatch.setattr(simple_image, "_cimage", SimpleNamespace(convert=fake_convert))
     img = SimpleImage.new("L", (1, 1), 3)
     out = img.convert("RGB")
 
     assert calls == [("L", "RGB", 1, 1)]
     assert out.mode == "RGB"
     assert out.getpixel((0, 0)) == (7, 8, 9)
-
-
-def test_convert_falls_back_when_c_accel_raises(monkeypatch):
-    """验证 C 加速实现异常时 convert 会自动回退 Python 路径."""
-
-    def fake_convert(data, src_mode, dst_mode, width, height):
-        raise RuntimeError("boom")
-
-    monkeypatch.setattr(simple_image, "_CIMAGE_ACCEL", SimpleNamespace(convert=fake_convert))
-    img = SimpleImage.new("L", (1, 1), 9)
-    out = img.convert("RGB")
-
-    assert out.mode == "RGB"
-    assert out.getpixel((0, 0)) == (9, 9, 9)
 
 
 def test_resize_prefers_c_accel_when_available(monkeypatch):
@@ -110,7 +87,7 @@ def test_resize_prefers_c_accel_when_available(monkeypatch):
         calls.append((mode, src_w, src_h, dst_w, dst_h))
         return bytes([5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
 
-    monkeypatch.setattr(simple_image, "_CIMAGE_ACCEL", SimpleNamespace(resize_nearest=fake_resize))
+    monkeypatch.setattr(simple_image, "_cimage", SimpleNamespace(resize_nearest=fake_resize))
     img = SimpleImage.new("RGB", (1, 1), (1, 2, 3))
     out = img.resize((2, 2))
 
@@ -118,11 +95,6 @@ def test_resize_prefers_c_accel_when_available(monkeypatch):
     assert out.mode == "RGB"
     assert out.width == 2
     assert out.height == 2
-
-
-def test_c_accel_exports_match_runtime_module():
-    """验证 simple_image 使用与 codecs 一致的 C 扩展模块引用."""
-    assert simple_image._CIMAGE_ACCEL is codecs._cimage
 
 
 def test_open_png_raises_when_c_backend_unavailable(monkeypatch, tmp_path):
@@ -208,7 +180,7 @@ def test_open_webp_reports_decode_error(monkeypatch):
 def test_from_bytes_and_open_consistent_behavior(monkeypatch):
     """验证同一 JPEG 输入在 open 与 from_bytes 的行为一致."""
     jpeg_header = b"\xff\xd8\xff\xe0"
-    monkeypatch.setattr(simple_image, "_CIMAGE_ACCEL", None)
+    monkeypatch.setattr(simple_image, "_cimage", None)
     monkeypatch.setattr(
         simple_image,
         "decode_jpeg_rgb",

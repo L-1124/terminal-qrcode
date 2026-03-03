@@ -2,12 +2,11 @@
 
 import enum
 import logging
-import os
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, Protocol, cast
+from typing import Literal, cast
 
-import terminal_qrcode.codecs as codecs_module
+from terminal_qrcode import _cimage
 from terminal_qrcode.codecs import (
     PngDecodeError,
     PngEncodeError,
@@ -35,45 +34,6 @@ _MODES: dict[str, _ModeInfo] = {
 }
 
 logger = logging.getLogger(__name__)
-
-
-class CImageAccelProtocol(Protocol):
-    """_cimage 模块静态协议."""
-
-    def convert(self, data: bytes, src_mode: str, dst_mode: str, width: int, height: int) -> bytes:
-        """转换像素模式."""
-        ...
-
-    def getbbox_nonwhite(self, data: bytes, mode: str, width: int, height: int) -> tuple[int, int, int, int] | None:
-        """获取非白像素包围盒."""
-        ...
-
-    def resize_nearest(self, data: bytes, mode: str, src_w: int, src_h: int, dst_w: int, dst_h: int) -> bytes:
-        """最近邻缩放."""
-        ...
-
-    def decode_png_8bit(self, data: bytes) -> tuple[str, int, int, bytes]:
-        """解码 PNG."""
-        ...
-
-    def encode_png_8bit(self, data: bytes, mode: str, width: int, height: int) -> bytes:
-        """编码 PNG."""
-        ...
-
-    def threshold_to_bits(self, data: bytes, mode: str, width: int, height: int, threshold: int) -> bytes:
-        """阈值化."""
-        ...
-
-    def sixel_encode_mono(self, bits: bytes, width: int, height: int) -> str:
-        """编码 sixel."""
-        ...
-
-
-_CIMAGE_ACCEL: CImageAccelProtocol | None = None
-if os.environ.get("QRT_DISABLE_C_ACCEL", "") != "1":
-    cimage = codecs_module._cimage
-    if cimage is not None:
-        _CIMAGE_ACCEL = cast(CImageAccelProtocol, cimage)
 
 
 class SimpleImage:
@@ -208,12 +168,13 @@ class SimpleImage:
         if mode == self.mode:
             return self.copy()
 
-        if _CIMAGE_ACCEL is not None:
-            try:
-                out = _CIMAGE_ACCEL.convert(bytes(self._data), self.mode, mode, self.width, self.height)
-                return SimpleImage(mode, (self.width, self.height), out)
-            except Exception:  # noqa: BLE001
-                pass
+        try:
+            src_mode = cast(Literal["L", "RGB", "RGBA"], self.mode)
+            dst_mode = cast(Literal["L", "RGB", "RGBA"], mode)
+            out = _cimage.convert(bytes(self._data), src_mode, dst_mode, self.width, self.height)
+            return SimpleImage(mode, (self.width, self.height), out)
+        except Exception:  # noqa: BLE001
+            pass
 
         data = self._data
         pixels = self.width * self.height
@@ -318,20 +279,20 @@ class SimpleImage:
 
     def getbbox_nonwhite(self) -> tuple[int, int, int, int] | None:
         """返回非白色像素包围盒."""
-        if _CIMAGE_ACCEL is not None:
-            try:
-                result = _CIMAGE_ACCEL.getbbox_nonwhite(bytes(self._data), self.mode, self.width, self.height)
-                if result is None:
-                    return None
-                if isinstance(result, tuple) and len(result) == 4:
-                    return (
-                        int(result[0]),
-                        int(result[1]),
-                        int(result[2]),
-                        int(result[3]),
-                    )
-            except Exception:  # noqa: BLE001
-                pass
+        try:
+            mode = cast(Literal["L", "RGB", "RGBA"], self.mode)
+            result = _cimage.getbbox_nonwhite(bytes(self._data), mode, self.width, self.height)
+            if result is None:
+                return None
+            if isinstance(result, tuple) and len(result) == 4:
+                return (
+                    int(result[0]),
+                    int(result[1]),
+                    int(result[2]),
+                    int(result[3]),
+                )
+        except Exception:  # noqa: BLE001
+            pass
 
         left = self.width
         top = self.height
@@ -391,19 +352,19 @@ class SimpleImage:
         if new_w <= 0 or new_h <= 0:
             raise ValueError("Resize target must be positive.")
 
-        if _CIMAGE_ACCEL is not None:
-            try:
-                out = _CIMAGE_ACCEL.resize_nearest(
-                    bytes(self._data),
-                    self.mode,
-                    self.width,
-                    self.height,
-                    new_w,
-                    new_h,
-                )
-                return SimpleImage(self.mode, (new_w, new_h), out)
-            except Exception:  # noqa: BLE001
-                pass
+        try:
+            mode = cast(Literal["L", "RGB", "RGBA"], self.mode)
+            out = _cimage.resize_nearest(
+                bytes(self._data),
+                mode,
+                self.width,
+                self.height,
+                new_w,
+                new_h,
+            )
+            return SimpleImage(self.mode, (new_w, new_h), out)
+        except Exception:  # noqa: BLE001
+            pass
 
         channels = _MODES[self.mode].channels
         out = bytearray(new_w * new_h * channels)

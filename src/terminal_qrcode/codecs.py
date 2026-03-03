@@ -1,11 +1,7 @@
 """图像编解码后端整合模块（纯 C 扩展实现）."""
 
-import ctypes
 import logging
-import os
-import sys
-from pathlib import Path
-from typing import Any, Literal, cast
+from typing import Literal, cast
 
 logger = logging.getLogger(__name__)
 
@@ -52,55 +48,6 @@ class WebPDecodeError(RuntimeError):
     """libwebp 解码失败."""
 
 
-_WINDOWS_DLL_DIR_HANDLE: Any | None = None
-_WINDOWS_DLL_PREPARED = False
-
-
-def _prepare_windows_runtime_dlls() -> None:
-    """准备 Windows 运行时 DLL 搜索路径与预加载."""
-    global _WINDOWS_DLL_DIR_HANDLE
-    global _WINDOWS_DLL_PREPARED
-
-    if _WINDOWS_DLL_PREPARED or sys.platform != "win32":
-        return
-    _WINDOWS_DLL_PREPARED = True
-
-    vendor_dir = Path(__file__).resolve().parent / "_vendor" / "windows"
-    if not vendor_dir.exists():
-        logger.debug("Windows vendor dir not found: %s", vendor_dir)
-        return
-
-    try:
-        add_dll_directory = getattr(os, "add_dll_directory", None)
-        if add_dll_directory is not None:
-            _WINDOWS_DLL_DIR_HANDLE = add_dll_directory(str(vendor_dir))
-    except OSError as exc:
-        logger.debug("add_dll_directory failed: %r", exc)
-
-    os.environ["PATH"] = f"{vendor_dir}{os.pathsep}{os.environ.get('PATH', '')}"
-
-    preload_candidates = [
-        "jpeg62.dll",
-        "zlib1.dll",
-        "turbojpeg.dll",
-        "libpng16.dll",
-        "libpng16-16.dll",
-        "libsharpyuv.dll",
-        "libwebp.dll",
-    ]
-    for dll_name in preload_candidates:
-        dll_path = vendor_dir / dll_name
-        if not dll_path.exists():
-            continue
-        try:
-            windll_loader = getattr(ctypes, "WinDLL", None)
-            if windll_loader is not None:
-                windll_loader(str(dll_path))
-        except OSError as exc:
-            logger.debug("Preload DLL failed: %s err=%r", dll_path, exc)
-
-
-_prepare_windows_runtime_dlls()
 try:
     from terminal_qrcode import _cimage
 except Exception as exc:  # noqa: BLE001

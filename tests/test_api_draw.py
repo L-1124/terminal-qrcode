@@ -1,15 +1,21 @@
 """对外 draw API 测试."""
 
+import os
 from pathlib import Path
 from typing import Any
 from unittest.mock import patch
 
 import pytest
 
-from terminal_qrcode import draw
+from terminal_qrcode import draw, layout
 from terminal_qrcode.contracts import ImageProtocol
 from terminal_qrcode.core import TerminalCapability
 from terminal_qrcode.simple_image import SimpleImage
+
+
+@pytest.fixture(autouse=True)
+def _mock_terminal_size(monkeypatch):
+    monkeypatch.setattr(layout, "get_terminal_size", lambda fallback: os.terminal_size((80, 24)))
 
 
 class _PILLikeImage(ImageProtocol):
@@ -75,9 +81,9 @@ def test_draw_force_renderer_uses_literal_hint():
     """验证 draw.force_renderer 使用 Literal 以提供明确 IDE 提示."""
     from typing import get_type_hints
 
-    from terminal_qrcode.contracts import RendererName
+    from terminal_qrcode.contracts import ImageInput, RendererName
 
-    hints = get_type_hints(draw)
+    hints = get_type_hints(draw, localns={"ImageInput": ImageInput, "RendererName": RendererName})
     assert hints["force_renderer"] == RendererName | None
 
 

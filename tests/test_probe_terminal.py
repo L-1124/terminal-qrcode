@@ -1,14 +1,22 @@
 """终端能力探测测试."""
 
 import contextlib
+import os
 from unittest.mock import patch
 
 import pytest
 
 from terminal_qrcode import draw
-from terminal_qrcode.core import TerminalCapability
+from terminal_qrcode.contracts import TerminalCapability
 from terminal_qrcode.probe import TerminalProbe
 from terminal_qrcode.simple_image import SimpleImage
+
+
+@pytest.fixture(autouse=True)
+def _mock_terminal_size(monkeypatch):
+    from terminal_qrcode import layout
+
+    monkeypatch.setattr(layout, "get_terminal_size", lambda fallback: os.terminal_size((80, 24)))
 
 
 @pytest.fixture(autouse=True)

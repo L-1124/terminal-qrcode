@@ -85,10 +85,10 @@ def main():
             datefmt="%H:%M:%S",
         )
         try:
-            from terminal_qrcode import renderers
+            from terminal_qrcode import layout
 
-            term_cols, term_rows = renderers._get_terminal_size_cells()
-            avail_cols, avail_rows = renderers._get_available_cells()
+            term_cols, term_rows = layout._get_terminal_size_cells()
+            avail_cols, avail_rows = layout._get_available_cells()
             logging.getLogger(__name__).debug(
                 "Terminal size: term_cols=%s term_rows=%s avail_cols=%s avail_rows=%s",
                 term_cols,
