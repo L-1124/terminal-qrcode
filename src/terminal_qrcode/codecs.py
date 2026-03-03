@@ -2,8 +2,10 @@
 
 import logging
 import os
+import sys
 import tempfile
 from functools import lru_cache
+from importlib import resources as importlib_resources
 from typing import Any
 
 PNG_IMAGE_VERSION = 1
@@ -269,6 +271,21 @@ def _load_cffi_lib(
     elif os.name == "posix":
         candidates.extend(posix_candidates)
 
+    seen_path: set[str] = set()
+    for resource in _iter_packaged_library_resources(tuple(candidates)):
+        try:
+            with importlib_resources.as_file(resource) as lib_path:
+                path = str(lib_path)
+                if not lib_path.exists() or path in seen_path:
+                    continue
+                seen_path.add(path)
+                lib = ffi.dlopen(path)
+        except Exception as exc:
+            logger.debug("Failed to load packaged library candidate '%s': %r", resource, exc)
+            continue
+        logger.debug("Loaded packaged library candidate '%s' via cffi.", path)
+        return ffi, lib
+
     seen: set[str] = set()
     for name in candidates:
         if name in seen:
@@ -283,6 +300,31 @@ def _load_cffi_lib(
         return ffi, lib
     logger.debug("No dynamic library candidates could be loaded. candidates=%s", candidates)
     return None
+
+
+def _iter_packaged_library_resources(candidates: tuple[str, ...]) -> list[Any]:
+    try:
+        package_root = importlib_resources.files("terminal_qrcode")
+    except Exception as exc:
+        logger.debug("Failed to resolve package resources for dynamic libraries: %r", exc)
+        return []
+
+    resources: list[Any] = []
+    for subdir in _get_vendor_subdirs():
+        base = package_root.joinpath(*subdir)
+        for name in candidates:
+            resources.append(base.joinpath(name))
+    return resources
+
+
+def _get_vendor_subdirs() -> tuple[tuple[str, ...], ...]:
+    if os.name == "nt":
+        return (("_vendor", "windows"), ("_vendor",))
+    if os.name == "posix":
+        if sys.platform == "darwin":
+            return (("_vendor", "macos"), ("_vendor",))
+        return (("_vendor", "linux"), ("_vendor",))
+    return (("_vendor",),)
 
 
 def _decode_png_with_lib(lib_ctx: tuple[Any, Any], png_data: bytes) -> tuple[str, int, int, bytes]:

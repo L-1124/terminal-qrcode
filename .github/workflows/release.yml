@@ -13,6 +13,13 @@ jobs:
   build_wheels:
     name: Build wheels (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    env:
+      CIBW_ARCHS_LINUX: "x86_64 aarch64"
+      CIBW_ARCHS_MACOS: "x86_64 arm64"
+      CIBW_ARCHS_WINDOWS: AMD64
+      CIBW_BEFORE_ALL_LINUX: bash .github/scripts/vendor-linux.sh
+      CIBW_BEFORE_ALL_MACOS: bash .github/scripts/vendor-macos.sh
+      CIBW_BEFORE_ALL_WINDOWS: powershell -ExecutionPolicy Bypass -File .github/scripts/vendor-windows.ps1
     strategy:
       fail-fast: false
       matrix:
@@ -41,6 +48,96 @@ jobs:
 
       - name: Build wheels with cibuildwheel
         run: uvx --from cibuildwheel==2.23.3 cibuildwheel --output-dir dist
+
+      - name: Validate bundled vendor libraries in wheel
+        shell: python
+        run: |
+          import glob
+          import os
+          import zipfile
+          from pathlib import PurePosixPath
+
+          runner_os = os.environ["RUNNER_OS"]
+          platform_dir = {"Linux": "linux", "macOS": "macos", "Windows": "windows"}[runner_os]
+          required = ["libpng", "libwebp"]
+          if runner_os == "Windows":
+              required.append("turbojpeg")
+          else:
+              required.extend(["libturbojpeg", "libsixel"])
+
+          wheels = sorted(glob.glob("dist/*.whl"))
+          if not wheels:
+              raise SystemExit("No wheel file found in dist/")
+
+          for wheel_path in wheels:
+              with zipfile.ZipFile(wheel_path, "r") as zf:
+                  names = [n for n in zf.namelist() if "/_vendor/" in f"/{n}" and not n.endswith("/")]
+
+              for needle in required:
+                  ok = any(
+                      f"/_vendor/{platform_dir}/" in f"/{name}"
+                      and needle in PurePosixPath(name).name.lower()
+                      for name in names
+                  )
+                  if not ok:
+                      raise SystemExit(f"Missing vendor library for '{needle}' in {wheel_path}")
+
+              print(f"Wheel vendor validation passed for {wheel_path} on {runner_os}")
+
+      - name: Validate runtime dynamic library loading
+        shell: python
+        run: |
+          import glob
+          import os
+          import subprocess
+          import tempfile
+          import venv
+          from pathlib import Path
+
+          runner_os = os.environ["RUNNER_OS"]
+          expect_sixel = runner_os in {"Linux", "macOS"}
+          wheels = sorted(glob.glob("dist/*.whl"))
+          if not wheels:
+              raise SystemExit("No wheel file found in dist/")
+          code = "\n".join(
+              [
+                  "import os",
+                  "from terminal_qrcode import codecs",
+                  "",
+                  "checks = [",
+                  "    ('turbojpeg', codecs._load_turbojpeg_cffi()),",
+                  "    ('libpng', codecs._load_libpng_cffi()),",
+                  "    ('libwebp', codecs._load_libwebp_cffi()),",
+                  "]",
+                  "for name, result in checks:",
+                  "    if result is None:",
+                  "        raise SystemExit(f'{name} failed to load from wheel runtime')",
+                  "",
+                  "libsixel_result = codecs._load_libsixel_cffi()",
+                  "if os.environ.get('EXPECT_SIXEL') == '1' and libsixel_result is None:",
+                  "    raise SystemExit('libsixel failed to load from wheel runtime')",
+                  "if os.environ.get('EXPECT_SIXEL') != '1' and libsixel_result is None:",
+                  "    print('libsixel not bundled on this platform; fallback expected.')",
+                  "",
+                  "print('Runtime library load checks passed.')",
+              ]
+          )
+          for wheel_path in wheels:
+              venv_dir = Path(tempfile.mkdtemp(prefix="tq-wheel-check-"))
+              venv.create(venv_dir, with_pip=True, clear=True)
+
+              if runner_os == "Windows":
+                  py = venv_dir / "Scripts" / "python.exe"
+              else:
+                  py = venv_dir / "bin" / "python"
+
+              subprocess.run([str(py), "-m", "pip", "install", "--upgrade", "pip"], check=True)
+              subprocess.run([str(py), "-m", "pip", "install", wheel_path], check=True)
+
+              env = os.environ.copy()
+              env["EXPECT_SIXEL"] = "1" if expect_sixel else "0"
+              subprocess.run([str(py), "-c", code], check=True, env=env)
+              print(f"Runtime library load checks passed for {wheel_path}")
 
       - name: Upload wheel artifacts
         uses: actions/upload-artifact@v4
@@ -85,6 +182,7 @@ jobs:
 
   publish:
     name: Publish release
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')
     needs:
       - build_wheels
       - build_sdist

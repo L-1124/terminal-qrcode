@@ -13,7 +13,7 @@
 uv add qrcode-terminal
 ```
 
-## ✨ Python API（默认）
+## ✨ Python API
 
 ```python
 from terminal_qrcode import draw
@@ -61,6 +61,35 @@ python -m terminal_qrcode <image_path> [options]
 - `--invert`
 - `--ascii-only`
 - `--debug`
+
+## 🧱 Wheel 内置运行库
+
+官方发布的 wheel 会内置解码/编码所需的动态库：
+
+- `libturbojpeg`
+- `libpng`
+- `libwebp`
+- `libsixel`
+
+平台策略：
+
+- Linux/macOS：`libsixel` 为强制内置项。
+- Windows：`libsixel` 为可选内置项，缺失时自动回退到现有渲染 fallback 路径。
+
+当前 wheel 架构覆盖：
+
+- Linux: `x86_64`, `aarch64`
+- macOS: `x86_64`, `arm64`
+- Windows: `AMD64`
+
+## 🛠️ 本地开发依赖自举（Windows）
+
+本地开发可显式执行依赖自举命令（Windows 优先支持）：
+
+```bash
+uv sync
+uv run python tools/bootstrap_deps.py
+```
 
 ## 📄 License
 

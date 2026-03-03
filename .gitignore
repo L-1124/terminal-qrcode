@@ -5,6 +5,8 @@ __pycache__/
 test.png
 # C extensions
 *.so
+qrcode/
+_vendor/
 
 # Distribution / packaging
 .Python
