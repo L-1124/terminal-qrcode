@@ -1,9 +1,13 @@
 """可选 C 加速模块的类型声明."""
 
+from typing import Literal, TypeAlias
+
+PixelMode: TypeAlias = Literal["L", "RGB", "RGBA"]
+
 def convert(
     data: bytes,
-    src_mode: str,
-    dst_mode: str,
+    src_mode: PixelMode,
+    dst_mode: PixelMode,
     width: int,
     height: int,
 ) -> bytes:
@@ -11,7 +15,7 @@ def convert(
 
 def getbbox_nonwhite(
     data: bytes,
-    mode: str,
+    mode: PixelMode,
     width: int,
     height: int,
 ) -> tuple[int, int, int, int] | None:
@@ -19,7 +23,7 @@ def getbbox_nonwhite(
 
 def resize_nearest(
     data: bytes,
-    mode: str,
+    mode: PixelMode,
     src_w: int,
     src_h: int,
     dst_w: int,
@@ -29,20 +33,30 @@ def resize_nearest(
 
 def decode_png_8bit(
     data: bytes,
-) -> tuple[str, int, int, bytes]:
+) -> tuple[PixelMode, int, int, bytes]:
     """解码 PNG 并返回 `(mode, width, height, pixels)`."""
 
 def encode_png_8bit(
     data: bytes,
-    mode: str,
+    mode: PixelMode,
     width: int,
     height: int,
 ) -> bytes:
     """编码 PNG 并返回 PNG 二进制字节."""
 
+def decode_jpeg_turbo(
+    data: bytes,
+) -> tuple[int, int, bytes]:
+    """解码 JPEG 并返回 `(width, height, rgb_bytes)`."""
+
+def decode_webp_lib(
+    data: bytes,
+) -> tuple[int, int, bytes]:
+    """解码 WEBP 并返回 `(width, height, rgba_bytes)`."""
+
 def threshold_to_bits(
     data: bytes,
-    mode: str,
+    mode: PixelMode,
     width: int,
     height: int,
     threshold: int,

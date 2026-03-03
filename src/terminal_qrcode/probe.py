@@ -9,10 +9,25 @@ import sys
 import time
 from collections.abc import Generator
 from dataclasses import dataclass
+from typing import Any
 
 from terminal_qrcode.core import TerminalCapability
 
 logger = logging.getLogger(__name__)
+
+if sys.platform == "win32":
+    termios: Any | None = None
+    tty: Any | None = None
+    msvcrt: Any | None
+    try:
+        import msvcrt
+    except ImportError:
+        msvcrt = None
+else:
+    import termios
+    import tty
+
+    msvcrt: Any | None = None
 
 _PROBE_TOTAL_BUDGET_MS = 80
 _TMUX_PROBE_BUDGET_MS = 20
@@ -99,21 +114,20 @@ class TerminalProbe:
             yield
             return
 
-        try:
-            import termios
-            import tty
-        except ImportError:
-            # Windows 不支持 termios
+        if sys.platform == "win32":
             yield
             return
 
-        fd = sys.stdin.fileno()
-        old_settings = termios.tcgetattr(fd)
-        try:
-            tty.setcbreak(fd)
-            yield
-        finally:
-            termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+        if termios is not None and tty is not None:
+            fd = sys.stdin.fileno()
+            old_settings = termios.tcgetattr(fd)
+            try:
+                tty.setcbreak(fd)
+                yield
+            finally:
+                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+            return
+        yield
 
     def _query_terminal(self, query: str, timeout: float) -> str:
         """向终端发送查询序列并读取响应, 受全局严格超时控制."""
@@ -123,18 +137,16 @@ class TerminalProbe:
         # 清除输入缓冲区
         if sys.platform != "win32":
             try:
-                import termios
-
-                termios.tcflush(sys.stdin, termios.TCIFLUSH)
-            except ImportError:
+                if termios is not None:
+                    termios.tcflush(sys.stdin, termios.TCIFLUSH)
+            except Exception:  # noqa: BLE001
                 pass
         else:
             try:
-                import msvcrt
-
-                while msvcrt.kbhit():
-                    msvcrt.getch()
-            except ImportError:
+                if msvcrt is not None:
+                    while msvcrt.kbhit():
+                        msvcrt.getch()
+            except Exception:  # noqa: BLE001
                 pass
 
         sys.stdout.write(query)
@@ -143,9 +155,7 @@ class TerminalProbe:
         start_time = time.monotonic()
         stdin = sys.stdin
 
-        if sys.platform == "win32":
-            import msvcrt
-
+        if sys.platform == "win32" and msvcrt is not None:
             res_bytes = bytearray()
             started = False
             while time.monotonic() - start_time < timeout:

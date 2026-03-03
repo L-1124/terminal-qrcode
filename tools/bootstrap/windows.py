@@ -3,7 +3,6 @@
 import os
 import shutil
 import subprocess
-import sys
 from collections.abc import Callable
 from pathlib import Path
 
@@ -12,7 +11,6 @@ REQUIRED_PORTS = [
     "libpng:x64-windows",
     "libwebp:x64-windows",
 ]
-OPTIONAL_PORTS = ["libsixel:x64-windows"]
 
 
 def _run_command(cmd: list[str], cwd: Path | None = None) -> None:
@@ -23,11 +21,6 @@ def _copy_required(source: Path, target: Path, name: str) -> None:
     if not source.exists():
         raise RuntimeError(f"Required dynamic library not found: {name}")
     shutil.copy2(source, target / name)
-
-
-def _port_exists(vcpkg_root: Path, port_spec: str) -> bool:
-    port_name = port_spec.split(":", maxsplit=1)[0]
-    return (vcpkg_root / "ports" / port_name).is_dir()
 
 
 def bootstrap_windows(
@@ -64,21 +57,15 @@ def bootstrap_windows(
 
     run_command([str(vcpkg_exe), "--disable-metrics", "install", *REQUIRED_PORTS], vcpkg_root)
 
-    for port in OPTIONAL_PORTS:
-        if not _port_exists(vcpkg_root, port):
-            sys.stderr.write(f"warning: optional port not available in vcpkg registry: {port}\n")
-            continue
-        try:
-            run_command([str(vcpkg_exe), "--disable-metrics", "install", port], vcpkg_root)
-        except subprocess.CalledProcessError as exc:
-            sys.stderr.write(f"warning: optional port install failed: {port}. err={exc}\n")
-
     bin_dir = vcpkg_root / "installed" / "x64-windows" / "bin"
     if not bin_dir.exists():
         raise RuntimeError(f"vcpkg bin directory not found: {bin_dir}")
 
     _copy_required(bin_dir / "turbojpeg.dll", vendor_dir, "turbojpeg.dll")
+    _copy_required(bin_dir / "jpeg62.dll", vendor_dir, "jpeg62.dll")
     _copy_required(bin_dir / "libwebp.dll", vendor_dir, "libwebp.dll")
+    _copy_required(bin_dir / "libsharpyuv.dll", vendor_dir, "libsharpyuv.dll")
+    _copy_required(bin_dir / "zlib1.dll", vendor_dir, "zlib1.dll")
 
     libpng_candidates = sorted(bin_dir.glob("libpng*.dll"))
     if not libpng_candidates:
@@ -89,11 +76,5 @@ def bootstrap_windows(
         shutil.copy2(libpng_primary, vendor_dir / "libpng16-16.dll")
     if not (vendor_dir / "libpng16.dll").exists():
         shutil.copy2(libpng_primary, vendor_dir / "libpng16.dll")
-
-    libsixel = bin_dir / "libsixel.dll"
-    if libsixel.exists():
-        shutil.copy2(libsixel, vendor_dir / "libsixel.dll")
-    else:
-        sys.stderr.write("warning: libsixel.dll not found. sixel fallback remains enabled.\n")
 
     return sorted(path.name for path in vendor_dir.glob("*.dll"))

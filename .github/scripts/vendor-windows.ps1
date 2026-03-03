@@ -40,6 +40,10 @@ if (-not (Copy-LibIfExists -SourcePath (Join-Path $binDir "turbojpeg.dll") -Targ
     throw "turbojpeg.dll not found in $binDir"
 }
 
+if (-not (Copy-LibIfExists -SourcePath (Join-Path $binDir "jpeg62.dll") -TargetName "jpeg62.dll")) {
+    throw "jpeg62.dll not found in $binDir"
+}
+
 $libpngCandidates = Get-ChildItem -Path $binDir -Filter "libpng*.dll" | Sort-Object Name
 if (-not $libpngCandidates) {
     throw "libpng DLL not found in $binDir"
@@ -60,12 +64,12 @@ if (-not (Copy-LibIfExists -SourcePath (Join-Path $binDir "libwebp.dll") -Target
     throw "libwebp.dll not found in $binDir"
 }
 
-$libsixel = Join-Path $binDir "libsixel.dll"
-if (Test-Path $libsixel) {
-    Copy-Item -Path $libsixel -Destination (Join-Path $OutDir "libsixel.dll") -Force
+if (-not (Copy-LibIfExists -SourcePath (Join-Path $binDir "libsharpyuv.dll") -TargetName "libsharpyuv.dll")) {
+    throw "libsharpyuv.dll not found in $binDir"
 }
-else {
-    Write-Warning "libsixel.dll not found on Windows runner; keep fallback behavior."
+
+if (-not (Copy-LibIfExists -SourcePath (Join-Path $binDir "zlib1.dll") -TargetName "zlib1.dll")) {
+    throw "zlib1.dll not found in $binDir"
 }
 
 Write-Host "Bundled Windows libraries:"

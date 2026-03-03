@@ -4,7 +4,7 @@ import base64
 import os
 from collections.abc import Generator
 from types import SimpleNamespace
-from unittest.mock import Mock, patch
+from unittest.mock import patch
 
 import terminal_qrcode.simple_image as simple_image
 from terminal_qrcode import renderers
@@ -505,7 +505,6 @@ def test_sixel_renderer_output():
     config = RenderConfig()
     image = SimpleImage.new("L", (2, 2), 0)
     renderer = SixelRenderer()
-    renderer._img2sixel_cmd = None
     output = "".join(renderer.render(image, config))
     # Sixel 协议特征: 以 \x1bP9q 开头 (P1=9 强制 1:1), 以 \x1b\\ 结尾
     assert output.startswith("\x1bP9q")
@@ -528,45 +527,48 @@ def test_sixel_internal_path_prefers_c_encoder(monkeypatch):
     )
     img = SimpleImage.new("L", (2, 2), color=0)
     renderer = SixelRenderer()
-    renderer._img2sixel_cmd = None
     output = "".join(renderer.render(img, RenderConfig(fit=False, img_width=2)))
 
     assert calls == [(16, 16)]
     assert "#0?$#1@-" in output
 
 
-def test_sixel_prefers_libsixel_before_img2sixel(monkeypatch):
-    """验证 Sixel 渲染优先使用 libsixel 绑定而非 img2sixel."""
+def test_sixel_never_calls_external_img2sixel(monkeypatch):
+    """验证 Sixel 渲染路径不调用外部 img2sixel 命令."""
     img = SimpleImage.new("L", (2, 2), color=0)
     renderer = SixelRenderer()
-    renderer._img2sixel_cmd = "img2sixel"
+    run_calls: list[tuple] = []
 
-    monkeypatch.setattr(renderers, "_encode_sixel_with_libsixel", lambda _img: "LIBSIXEL_OUT")
-    run_mock = Mock()
-    monkeypatch.setattr("subprocess.run", run_mock)
+    def _forbid_run(*args, **kwargs):
+        run_calls.append((args, kwargs))
+        raise AssertionError("subprocess.run should not be called for sixel rendering")
+
+    monkeypatch.setattr(renderers.subprocess, "run", _forbid_run)
 
     output = "".join(renderer.render(img, RenderConfig()))
 
-    assert output == "LIBSIXEL_OUT"
-    run_mock.assert_not_called()
+    assert output.startswith("\x1bP9q")
+    assert output.endswith("\x1b\\")
+    assert run_calls == []
 
 
 def test_sixel_fit_best_effort_resizes_before_encode(monkeypatch):
     """验证 Sixel 在 fit 模式下会先按列宽约束图像再编码."""
     seen_widths: list[int] = []
 
-    def _fake_encode(img: SimpleImage) -> str:
-        seen_widths.append(img.width)
-        return "LIBSIXEL_OUT"
+    def _fake_sixel_encode(_bits: bytes, width: int, _height: int) -> str:
+        seen_widths.append(width)
+        return "#0?$#1@-"
 
     monkeypatch.setattr(renderers.shutil, "get_terminal_size", lambda fallback: os.terminal_size((14, 24)))
-    monkeypatch.setattr(renderers, "_encode_sixel_with_libsixel", _fake_encode)
+    monkeypatch.setattr(renderers, "_sixel_encode_mono", _fake_sixel_encode)
 
     img = SimpleImage.new("L", (120, 20), color=0)
     renderer = SixelRenderer()
     output = "".join(renderer.render(img, RenderConfig(fit=True)))
 
-    assert output == "LIBSIXEL_OUT"
+    assert output.startswith("\x1bP9q")
+    assert output.endswith("\x1b\\")
     assert seen_widths == [24]
 
 

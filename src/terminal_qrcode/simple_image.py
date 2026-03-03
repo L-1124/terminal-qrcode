@@ -1,16 +1,13 @@
 """轻量级图像模块."""
 
 import enum
-import io
 import logging
 import os
-import struct
-import subprocess
-import zlib
 from dataclasses import dataclass
 from pathlib import Path
-from typing import BinaryIO, Literal, Protocol, cast
+from typing import Literal, Protocol, cast
 
+import terminal_qrcode.codecs as codecs_module
 from terminal_qrcode.codecs import (
     PngDecodeError,
     PngEncodeError,
@@ -19,9 +16,9 @@ from terminal_qrcode.codecs import (
     TurboJpegUnavailableError,
     WebPDecodeError,
     WebPUnavailableError,
-    decode_jpeg_rgb_cffi,
-    decode_png_with_libpng_cffi,
-    decode_webp_rgba_cffi,
+    decode_jpeg_rgb,
+    decode_png_with_libpng,
+    decode_webp_rgba,
     encode_png_with_libpng,
 )
 
@@ -74,12 +71,9 @@ class CImageAccelProtocol(Protocol):
 
 _CIMAGE_ACCEL: CImageAccelProtocol | None = None
 if os.environ.get("QRT_DISABLE_C_ACCEL", "") != "1":
-    try:
-        from terminal_qrcode import _cimage
-
-        _CIMAGE_ACCEL = cast(CImageAccelProtocol, _cimage)
-    except Exception:  # noqa: BLE001
-        _CIMAGE_ACCEL = None
+    cimage = codecs_module._cimage
+    if cimage is not None:
+        _CIMAGE_ACCEL = cast(CImageAccelProtocol, cimage)
 
 
 class SimpleImage:
@@ -148,251 +142,38 @@ class SimpleImage:
     @classmethod
     def _decode_png_pipeline(cls, data: bytes) -> "SimpleImage":
         try:
-            mode, width, height, out = decode_png_with_libpng_cffi(data)
-            logger.debug("SimpleImage PNG decode: using cffi libpng.")
+            mode, width, height, out = decode_png_with_libpng(data)
+            logger.debug("SimpleImage PNG decode: using C backend.")
             return cls(mode, (width, height), out)
         except (PngUnavailableError, PngDecodeError) as exc:
-            logger.debug("SimpleImage PNG decode: cffi libpng unavailable/failed. err=%r", exc)
-
-        if _CIMAGE_ACCEL is not None:
-            image = cls._decode_png_with_pyd(data)
-            if image is not None:
-                return image
-        logger.debug("SimpleImage PNG decode: fallback to Python parser.")
-        return cls._from_png_stream(io.BytesIO(data))
-
-    @classmethod
-    def _decode_png_with_pyd(cls, data: bytes) -> "SimpleImage | None":
-        accel = _CIMAGE_ACCEL
-        if accel is None:
-            return None
-        try:
-            result = accel.decode_png_8bit(data)
-        except Exception as exc:  # noqa: BLE001
-            logger.debug("SimpleImage PNG decode: pyd failed. err=%r", exc)
-            return None
-        if not isinstance(result, tuple) or len(result) != 4:
-            logger.debug("SimpleImage PNG decode: pyd returned invalid result.")
-            return None
-        mode_raw, width_raw, height_raw, out_raw = result
-        logger.debug("SimpleImage PNG decode: using pyd accelerator.")
-        return cls(str(mode_raw), (int(width_raw), int(height_raw)), bytes(out_raw))
+            logger.debug("SimpleImage PNG decode: C backend unavailable/failed. err=%r", exc)
+            raise ValueError("PNG decode requires C backend (libpng).") from exc
 
     @classmethod
     def _decode_jpeg_pipeline(cls, jpeg_data: bytes) -> "SimpleImage":
-        if _CIMAGE_ACCEL is not None:
-            decode_jpeg = cls._decode_jpeg_with_pyd
-            decoded = decode_jpeg(jpeg_data)
-            if decoded is not None:
-                width, height, rgb = decoded
-                logger.debug("SimpleImage JPEG decode: using pyd accelerator.")
-                return cls("RGB", (width, height), rgb)
         try:
-            width, height, rgb = decode_jpeg_rgb_cffi(jpeg_data)
-            logger.debug("SimpleImage JPEG decode: using cffi turbojpeg.")
+            width, height, rgb = decode_jpeg_rgb(jpeg_data)
+            logger.debug("SimpleImage JPEG decode: using C backend.")
             return cls("RGB", (width, height), rgb)
         except TurboJpegUnavailableError as exc:
-            logger.debug("SimpleImage JPEG decode: cffi turbojpeg unavailable. err=%r", exc)
-            return cls._decode_jpeg_with_djpeg(jpeg_data)
+            logger.debug("SimpleImage JPEG decode: C backend unavailable. err=%r", exc)
+            raise ValueError("JPEG decode requires C backend (turbojpeg).") from exc
         except TurboJpegDecodeError as exc:
-            logger.debug("SimpleImage JPEG decode: cffi turbojpeg failed. err=%r", exc)
-            return cls._decode_jpeg_with_djpeg(jpeg_data)
+            logger.debug("SimpleImage JPEG decode: C backend failed. err=%r", exc)
+            raise ValueError("Failed to decode JPEG with C backend.") from exc
 
     @classmethod
     def _decode_webp_pipeline(cls, webp_data: bytes) -> "SimpleImage":
-        if _CIMAGE_ACCEL is not None:
-            decode_webp = cls._decode_webp_with_pyd
-            decoded = decode_webp(webp_data)
-            if decoded is not None:
-                width, height, rgba = decoded
-                logger.debug("SimpleImage WEBP decode: using pyd accelerator.")
-                return cls("RGBA", (width, height), rgba)
         try:
-            width, height, rgba = decode_webp_rgba_cffi(webp_data)
-            logger.debug("SimpleImage WEBP decode: using cffi libwebp.")
+            width, height, rgba = decode_webp_rgba(webp_data)
+            logger.debug("SimpleImage WEBP decode: using C backend.")
             return cls("RGBA", (width, height), rgba)
         except WebPUnavailableError as exc:
-            logger.debug("SimpleImage WEBP decode: cffi libwebp unavailable. err=%r", exc)
-            return cls._decode_webp_with_dwebp(webp_data)
+            logger.debug("SimpleImage WEBP decode: C backend unavailable. err=%r", exc)
+            raise ValueError("WEBP decode requires C backend (libwebp).") from exc
         except WebPDecodeError as exc:
-            logger.debug("SimpleImage WEBP decode: cffi libwebp failed. err=%r", exc)
-            return cls._decode_webp_with_dwebp(webp_data)
-
-    @staticmethod
-    def _decode_jpeg_with_pyd(_jpeg_data: bytes) -> tuple[int, int, bytes] | None:
-        """预留 pyd JPEG 解码接口."""
-        return None
-
-    @staticmethod
-    def _decode_webp_with_pyd(_webp_data: bytes) -> tuple[int, int, bytes] | None:
-        """预留 pyd WEBP 解码接口."""
-        return None
-
-    @classmethod
-    def _decode_jpeg_with_djpeg(cls, jpeg_data: bytes) -> "SimpleImage":
-        """使用 libjpeg 工具链(djpeg)回退解码 JPEG."""
-        try:
-            result = subprocess.run(
-                ["djpeg", "-pnm"],
-                input=jpeg_data,
-                check=True,
-                capture_output=True,
-            )
-            logger.debug("SimpleImage JPEG decode: using djpeg fallback.")
-            return cls._from_pnm_bytes(result.stdout)
-        except FileNotFoundError as exc:
-            logger.debug("SimpleImage JPEG decode: djpeg unavailable. err=%r", exc)
-            raise ValueError("JPEG decode requires libjpeg-turbo or libjpeg (djpeg).") from exc
-        except subprocess.CalledProcessError as exc:
-            stderr = exc.stderr.decode("utf-8", errors="ignore").strip()
-            msg = stderr if stderr else "Failed to decode JPEG with djpeg."
-            logger.debug("SimpleImage JPEG decode: djpeg failed. err=%s", msg)
-            raise ValueError(msg) from exc
-
-    @classmethod
-    def _decode_webp_with_dwebp(cls, webp_data: bytes) -> "SimpleImage":
-        """使用 dwebp 命令回退解码 WEBP."""
-        try:
-            result = subprocess.run(
-                ["dwebp", "-", "-pnm", "-o", "-"],
-                input=webp_data,
-                check=True,
-                capture_output=True,
-            )
-            logger.debug("SimpleImage WEBP decode: using dwebp fallback.")
-            return cls._from_pnm_bytes(result.stdout)
-        except FileNotFoundError as exc:
-            logger.debug("SimpleImage WEBP decode: dwebp unavailable. err=%r", exc)
-            raise ValueError("WEBP decode requires libwebp or dwebp.") from exc
-        except subprocess.CalledProcessError as exc:
-            stderr = exc.stderr.decode("utf-8", errors="ignore").strip()
-            msg = stderr if stderr else "Failed to decode WEBP with dwebp."
-            logger.debug("SimpleImage WEBP decode: dwebp failed. err=%s", msg)
-            raise ValueError(msg) from exc
-
-    @classmethod
-    def _from_png_stream(cls, stream: BinaryIO) -> "SimpleImage":
-        """解析 PNG 流."""
-        signature = stream.read(8)
-        if signature != b"\x89PNG\r\n\x1a\n":
-            raise ValueError("Only PNG images are supported.")
-
-        width = height = 0
-        bit_depth = 0
-        color_type = 0
-        idat_parts: list[bytes] = []
-
-        while True:
-            length_bytes = stream.read(4)
-            if len(length_bytes) != 4:
-                raise ValueError("Invalid PNG: missing chunk length.")
-            length = struct.unpack(">I", length_bytes)[0]
-            ctype = stream.read(4)
-            payload = stream.read(length)
-            _crc = stream.read(4)
-            if len(ctype) != 4 or len(payload) != length:
-                raise ValueError("Invalid PNG: broken chunk payload.")
-
-            if ctype == b"IHDR":
-                width, height, bit_depth, color_type, compression, flt, interlace = struct.unpack(">IIBBBBB", payload)
-                if compression != 0 or flt != 0 or interlace != 0:
-                    raise ValueError("Unsupported PNG compression/filter/interlace.")
-                if color_type == 0:
-                    if bit_depth not in (1, 2, 4, 8):
-                        raise ValueError("Only grayscale PNG bit depth 1/2/4/8 is supported.")
-                elif color_type in (2, 6):
-                    if bit_depth != 8:
-                        raise ValueError("Only 8-bit RGB/RGBA PNG is supported.")
-                else:
-                    raise ValueError("Only grayscale/RGB/RGBA PNG is supported.")
-            elif ctype == b"IDAT":
-                idat_parts.append(payload)
-            elif ctype == b"IEND":
-                break
-
-        if width <= 0 or height <= 0:
-            raise ValueError("Invalid PNG: missing IHDR.")
-        if not idat_parts:
-            raise ValueError("Invalid PNG: missing IDAT.")
-
-        raw = zlib.decompress(b"".join(idat_parts))
-        channels = {0: 1, 2: 3, 6: 4}[color_type]
-        if color_type == 0 and bit_depth < 8:
-            stride = (width * bit_depth + 7) // 8
-        else:
-            stride = width * channels
-        expected = (stride + 1) * height
-        if len(raw) != expected:
-            raise ValueError("Invalid PNG data length.")
-
-        if color_type == 0:
-            out = bytearray(width * height)
-        else:
-            out = bytearray(width * height * channels)
-        prev = bytes(stride)
-        src = 0
-        dst = 0
-
-        for _ in range(height):
-            filter_type = raw[src]
-            src += 1
-            row = bytearray(raw[src : src + stride])
-            src += stride
-            _unfilter_row(row, prev, filter_type, channels)
-            if color_type == 0 and bit_depth < 8:
-                expanded = _expand_packed_grayscale(bytes(row), width, bit_depth)
-                out[dst : dst + width] = expanded
-                dst += width
-            else:
-                out[dst : dst + stride] = row
-                dst += stride
-            prev = bytes(row)
-
-        mode = {0: "L", 2: "RGB", 6: "RGBA"}[color_type]
-        return cls(mode, (width, height), out)
-
-    @classmethod
-    def _from_pnm_bytes(cls, data: bytes) -> "SimpleImage":
-        """解析二进制 PNM(P5/P6)."""
-        if not data.startswith((b"P5", b"P6")):
-            raise ValueError("Unsupported PNM format.")
-        mode = "L" if data[:2] == b"P5" else "RGB"
-
-        tokens: list[bytes] = []
-        i = 2
-        n = len(data)
-        while len(tokens) < 3:
-            while i < n and data[i] in b" \t\r\n":
-                i += 1
-            if i >= n:
-                raise ValueError("Invalid PNM header.")
-            if data[i] == ord("#"):
-                while i < n and data[i] != ord("\n"):
-                    i += 1
-                continue
-            start = i
-            while i < n and data[i] not in b" \t\r\n":
-                i += 1
-            tokens.append(data[start:i])
-
-        width = int(tokens[0])
-        height = int(tokens[1])
-        maxval = int(tokens[2])
-        if maxval != 255:
-            raise ValueError("Only 8-bit PNM is supported.")
-
-        if i >= n or data[i] not in b" \t\r\n":
-            raise ValueError("Invalid PNM payload delimiter.")
-        if data[i] == ord("\r") and i + 1 < n and data[i + 1] == ord("\n"):
-            i += 2
-        else:
-            i += 1
-        payload = data[i:]
-        channels = 1 if mode == "L" else 3
-        expected = width * height * channels
-        if len(payload) < expected:
-            raise ValueError("PNM payload is truncated.")
-        return cls(mode, (width, height), payload[:expected])
+            logger.debug("SimpleImage WEBP decode: C backend failed. err=%r", exc)
+            raise ValueError("Failed to decode WEBP with C backend.") from exc
 
     def copy(self) -> "SimpleImage":
         """复制图像."""
@@ -663,51 +444,10 @@ class SimpleImage:
         """编码为 PNG."""
         try:
             out = encode_png_with_libpng(bytes(self._data), self.mode, self.width, self.height)
-            logger.debug("SimpleImage PNG encode: using libpng.")
+            logger.debug("SimpleImage PNG encode: using C backend.")
             return out
-        except (PngUnavailableError, PngEncodeError):
-            pass
-
-        if _CIMAGE_ACCEL is not None:
-            try:
-                out = _CIMAGE_ACCEL.encode_png_8bit(bytes(self._data), self.mode, self.width, self.height)
-                logger.debug("SimpleImage PNG encode: using C accelerator.")
-                return bytes(out)
-            except Exception as exc:  # noqa: BLE001
-                logger.debug("SimpleImage PNG encode: C accelerator failed, fallback to Python. err=%r", exc)
-
-        color_type = {"L": 0, "RGB": 2, "RGBA": 6}[self.mode]
-        channels = _MODES[self.mode].channels
-        stride = self.width * channels
-
-        raw = bytearray()
-        for y in range(self.height):
-            raw.append(0)  # filter type 0
-            start = y * stride
-            raw.extend(self._data[start : start + stride])
-        compressed = zlib.compress(bytes(raw), level=6)
-
-        out = bytearray(b"\x89PNG\r\n\x1a\n")
-        ihdr = struct.pack(">IIBBBBB", self.width, self.height, 8, color_type, 0, 0, 0)
-        out.extend(_png_chunk(b"IHDR", ihdr))
-        out.extend(_png_chunk(b"IDAT", compressed))
-        out.extend(_png_chunk(b"IEND", b""))
-        return bytes(out)
-
-
-def get_c_accel_status() -> dict[str, bool]:
-    """返回可选 C 加速能力状态."""
-    loaded = _CIMAGE_ACCEL is not None
-    return {
-        "loaded": loaded,
-        "decode_png": loaded,
-        "encode_png": loaded,
-        "threshold_to_bits": loaded,
-        "sixel_encode_mono": loaded,
-        "convert": loaded,
-        "getbbox_nonwhite": loaded,
-        "resize_nearest": loaded,
-    }
+        except (PngUnavailableError, PngEncodeError) as exc:
+            raise ValueError("PNG encode requires C backend (libpng).") from exc
 
 
 def _detect_image_type(data: bytes) -> Literal["png", "jpeg", "webp"] | None:
@@ -762,63 +502,3 @@ def _to_rgb_tuple(mode: str, data: bytearray | bytes) -> tuple[int, int, int]:
 
 def _clamp_u8(value: int) -> int:
     return max(0, min(255, int(value)))
-
-
-def _png_chunk(ctype: bytes, payload: bytes) -> bytes:
-    crc = zlib.crc32(ctype + payload) & 0xFFFFFFFF
-    return struct.pack(">I", len(payload)) + ctype + payload + struct.pack(">I", crc)
-
-
-def _paeth_predictor(a: int, b: int, c: int) -> int:
-    p = a + b - c
-    pa = abs(p - a)
-    pb = abs(p - b)
-    pc = abs(p - c)
-    if pa <= pb and pa <= pc:
-        return a
-    if pb <= pc:
-        return b
-    return c
-
-
-def _unfilter_row(row: bytearray, prev: bytes, filter_type: int, channels: int) -> None:
-    if filter_type == 0:
-        return
-    if filter_type == 1:
-        for i in range(len(row)):
-            left = row[i - channels] if i >= channels else 0
-            row[i] = (row[i] + left) & 0xFF
-        return
-    if filter_type == 2:
-        for i in range(len(row)):
-            row[i] = (row[i] + prev[i]) & 0xFF
-        return
-    if filter_type == 3:
-        for i in range(len(row)):
-            left = row[i - channels] if i >= channels else 0
-            up = prev[i]
-            row[i] = (row[i] + ((left + up) // 2)) & 0xFF
-        return
-    if filter_type == 4:
-        for i in range(len(row)):
-            left = row[i - channels] if i >= channels else 0
-            up = prev[i]
-            up_left = prev[i - channels] if i >= channels else 0
-            row[i] = (row[i] + _paeth_predictor(left, up, up_left)) & 0xFF
-        return
-    raise ValueError(f"Unsupported PNG filter type: {filter_type}")
-
-
-def _expand_packed_grayscale(row: bytes, width: int, bit_depth: int) -> bytes:
-    """将打包灰度样本（1/2/4-bit）展开为 8-bit 灰度行."""
-    max_sample = (1 << bit_depth) - 1
-    mask = max_sample
-    out = bytearray(width)
-
-    for x in range(width):
-        bit_pos = x * bit_depth
-        byte_idx = bit_pos // 8
-        shift = 8 - bit_depth - (bit_pos % 8)
-        sample = (row[byte_idx] >> shift) & mask
-        out[x] = (sample * 255) // max_sample
-    return bytes(out)

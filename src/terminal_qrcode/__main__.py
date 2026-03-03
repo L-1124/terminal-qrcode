@@ -6,7 +6,6 @@ import os
 import sys
 
 from terminal_qrcode import DrawOutput, draw
-from terminal_qrcode.simple_image import get_c_accel_status
 
 
 def main():
@@ -84,26 +83,6 @@ def main():
             level=logging.DEBUG,
             format="%(asctime)s | %(levelname)-7s | %(name)s | %(message)s",
             datefmt="%H:%M:%S",
-        )
-        status = get_c_accel_status()
-        status_fields = (
-            ("loaded", "loaded"),
-            ("decode_png", "png_dec"),
-            ("encode_png", "png_enc"),
-            ("threshold_to_bits", "thr"),
-            ("sixel_encode_mono", "sixel"),
-            ("convert", "convert"),
-            ("getbbox_nonwhite", "bbox"),
-            ("resize_nearest", "resize"),
-        )
-        status_text = " ".join(f"{alias}={status.get(key)}" for key, alias in status_fields)
-        logging.getLogger(__name__).debug("C accel status: %s", status_text)
-        logging.getLogger(__name__).debug(
-            "Render config: renderer=%s fit=%s max_cols=%s img_width=%s",
-            args.renderer,
-            args.fit,
-            args.max_cols,
-            args.img_width,
         )
         try:
             from terminal_qrcode import renderers

@@ -63,7 +63,7 @@ jobs:
           if runner_os == "Windows":
               required.append("turbojpeg")
           else:
-              required.extend(["libturbojpeg", "libsixel"])
+              required.append("libturbojpeg")
 
           wheels = sorted(glob.glob("dist/*.whl"))
           if not wheels:
@@ -95,29 +95,23 @@ jobs:
           from pathlib import Path
 
           runner_os = os.environ["RUNNER_OS"]
-          expect_sixel = runner_os in {"Linux", "macOS"}
           wheels = sorted(glob.glob("dist/*.whl"))
           if not wheels:
               raise SystemExit("No wheel file found in dist/")
           code = "\n".join(
               [
                   "import os",
+                  "from terminal_qrcode.simple_image import SimpleImage",
                   "from terminal_qrcode import codecs",
                   "",
-                  "checks = [",
-                  "    ('turbojpeg', codecs._load_turbojpeg_cffi()),",
-                  "    ('libpng', codecs._load_libpng_cffi()),",
-                  "    ('libwebp', codecs._load_libwebp_cffi()),",
-                  "]",
-                  "for name, result in checks:",
-                  "    if result is None:",
-                  "        raise SystemExit(f'{name} failed to load from wheel runtime')",
+                  "png = SimpleImage.new('RGB', (1, 1), (1, 2, 3)).to_png_bytes()",
+                  "mode, width, height, data = codecs.decode_png_with_libpng(png)",
+                  "if mode != 'RGB' or width != 1 or height != 1 or len(data) != 3:",
+                  "    raise SystemExit('PNG pure-C backend smoke test failed')",
                   "",
-                  "libsixel_result = codecs._load_libsixel_cffi()",
-                  "if os.environ.get('EXPECT_SIXEL') == '1' and libsixel_result is None:",
-                  "    raise SystemExit('libsixel failed to load from wheel runtime')",
-                  "if os.environ.get('EXPECT_SIXEL') != '1' and libsixel_result is None:",
-                  "    print('libsixel not bundled on this platform; fallback expected.')",
+                  "for name in ['decode_jpeg_rgb', 'decode_webp_rgba']:",
+                  "    if not hasattr(codecs, name):",
+                  "        raise SystemExit(f'missing compatibility API: {name}')",
                   "",
                   "print('Runtime library load checks passed.')",
               ]
@@ -134,9 +128,7 @@ jobs:
               subprocess.run([str(py), "-m", "pip", "install", "--upgrade", "pip"], check=True)
               subprocess.run([str(py), "-m", "pip", "install", wheel_path], check=True)
 
-              env = os.environ.copy()
-              env["EXPECT_SIXEL"] = "1" if expect_sixel else "0"
-              subprocess.run([str(py), "-c", code], check=True, env=env)
+              subprocess.run([str(py), "-c", code], check=True)
               print(f"Runtime library load checks passed for {wheel_path}")
 
       - name: Upload wheel artifacts

@@ -9,16 +9,16 @@ mkdir -p "${OUT_DIR}"
 
 install_deps() {
   if command -v dnf >/dev/null 2>&1; then
-    dnf -y install libjpeg-turbo libpng libwebp libsixel
+    dnf -y install libjpeg-turbo libpng libwebp
     return
   fi
   if command -v yum >/dev/null 2>&1; then
-    yum -y install libjpeg-turbo libpng libwebp libsixel
+    yum -y install libjpeg-turbo libpng libwebp
     return
   fi
   if command -v apt-get >/dev/null 2>&1; then
     apt-get update
-    apt-get install -y libturbojpeg0 libpng16-16 libwebp7 libsixel1
+    apt-get install -y libturbojpeg0 libpng16-16 libwebp7
     return
   fi
   echo "Unsupported package manager on Linux runner." >&2
@@ -73,19 +73,9 @@ libwebp_path="$(resolve_first_match \
   echo "libwebp shared library not found on Linux runner." >&2
   exit 1
 }
-libsixel_path="$(resolve_first_match \
-  /usr/lib64/libsixel.so* \
-  /usr/lib/aarch64-linux-gnu/libsixel.so* \
-  /usr/lib/x86_64-linux-gnu/libsixel.so* \
-  /usr/lib/libsixel.so*)" || {
-  echo "libsixel shared library not found on Linux runner." >&2
-  exit 1
-}
-
 copy_with_alias "${turbojpeg_path}" "libturbojpeg.so"
 copy_with_alias "${libpng_path}" "libpng16.so"
 copy_with_alias "${libwebp_path}" "libwebp.so"
-copy_with_alias "${libsixel_path}" "libsixel.so"
 
 echo "Bundled Linux libraries:"
 ls -al "${OUT_DIR}"

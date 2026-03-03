@@ -5,19 +5,25 @@ import logging
 import os
 import shutil
 import subprocess
-import tempfile
+import sys
 from collections.abc import Callable, Generator, Hashable
 from dataclasses import dataclass
 from functools import lru_cache
 from statistics import median
-from typing import Generic, Literal, TypeVar
+from typing import Any, Generic, Literal, TypeVar
 
 from terminal_qrcode import simple_image
-from terminal_qrcode.codecs import SixelEncodeError, SixelUnavailableError, encode_sixel_with_libsixel
 from terminal_qrcode.contracts import RenderConfig, Renderer, TerminalCapability
 from terminal_qrcode.simple_image import SimpleImage
 
 logger = logging.getLogger(__name__)
+
+if sys.platform != "win32":
+    import fcntl
+    import termios
+else:
+    fcntl: Any | None = None
+    termios: Any | None = None
 
 T = TypeVar("T")
 _MIN_QR_SIZE = 21
@@ -164,12 +170,10 @@ def _build_fit_plan(config: RenderConfig, src_w: int, src_h: int) -> FitPlan:
 
 def _get_cell_pixel_size() -> tuple[int, int] | None:
     """尝试读取终端单元像素尺寸（失败返回 None）."""
-    if os.name == "nt":
+    if fcntl is None or termios is None:
         return None
     try:
-        import fcntl
         import struct
-        import termios
 
         if not os.isatty(1):
             return None
@@ -645,14 +649,6 @@ def _sixel_encode_mono(bits: bytes, width: int, height: int) -> str:
     return "".join(parts)
 
 
-def _encode_sixel_with_libsixel(image: SimpleImage) -> str | None:
-    """优先尝试使用 libsixel(cffi) 编码，失败返回 None."""
-    try:
-        return encode_sixel_with_libsixel(image.to_png_bytes())
-    except (SixelUnavailableError, SixelEncodeError):
-        return None
-
-
 class HalfBlockRenderer:
     """半块字符降级渲染器."""
 
@@ -889,8 +885,6 @@ class WezTermRenderer(ITerm2Renderer):
 class SixelRenderer:
     """DEC Sixel 图形协议渲染器."""
 
-    _img2sixel_cmd: str | None = shutil.which("img2sixel")
-
     def render(self, payload: list[list[bool]] | SimpleImage, config: RenderConfig) -> Generator[str, None, None]:
         """根据 DEC Sixel 协议渲染矩阵或图像."""
         if isinstance(payload, SimpleImage):
@@ -898,36 +892,10 @@ class SixelRenderer:
             plan = _build_fit_plan(config, image.width, image.height)
             target_w_px, target_h_px = _cells_to_pixels(plan.display_cols, plan.display_rows)
             image = image.resize((target_w_px, target_h_px), resample=SimpleImage.Resampling.NEAREST)
-            libsixel_out = _encode_sixel_with_libsixel(image)
-            if libsixel_out is not None:
-                logger.debug("Sixel: Successfully encoded via libsixel python binding")
-                yield libsixel_out
-                return
-
-            if self._img2sixel_cmd:
-                tmp_path = None
-                try:
-                    with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as tmp:
-                        tmp.write(image.to_png_bytes())
-                        tmp_path = tmp.name
-
-                    logger.debug("Sixel: Attempting system img2sixel for %s", tmp_path)
-                    result = subprocess.run([self._img2sixel_cmd, tmp_path], capture_output=True, check=True)
-                    os.remove(tmp_path)
-                    logger.debug("Sixel: Successfully used img2sixel")
-                    yield result.stdout.decode("ascii")
-                    return
-                except (FileNotFoundError, subprocess.CalledProcessError):
-                    if tmp_path and os.path.exists(tmp_path):
-                        os.remove(tmp_path)
-                    logger.debug("Sixel: img2sixel failed, falling back to 1:1 native binarization")
-            else:
-                logger.debug("Sixel: img2sixel not found, using internal 1:1 native binarization")
-
             image.thumbnail((800, 800), SimpleImage.Resampling.NEAREST)
             width, height = image.width, image.height
             bits = _threshold_to_bits(image, threshold=128)
-            logger.debug("Sixel rendering (Image Direct): %sx%s, 1:1 native pixels", width, height)
+            logger.debug("Sixel: using internal encoder, size=%sx%s", width, height)
         else:
             image = _matrix_to_image(payload, config.scale, "RGB").convert("L")
             plan = _build_fit_plan(config, image.width, image.height)
@@ -989,7 +957,6 @@ __all__ = [
     "_matrix_to_image",
     "_threshold_to_bits",
     "_sixel_encode_mono",
-    "_encode_sixel_with_libsixel",
     "_tmux_allow_passthrough",
     "_should_tmux_wrap",
     "_tmux_wrap",

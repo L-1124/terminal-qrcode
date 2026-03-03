@@ -1,9 +1,13 @@
 #define PY_SSIZE_T_CLEAN
 #include <Python.h>
 
-#include <stdlib.h>
 #include <stdint.h>
+#include <stdlib.h>
 #include <string.h>
+
+#include <png.h>
+#include <turbojpeg.h>
+#include <webp/decode.h>
 
 static int
 channels_from_mode(const char *mode)
@@ -18,96 +22,6 @@ channels_from_mode(const char *mode)
         return 4;
     }
     return -1;
-}
-
-static uint16_t
-read_u16_le(const uint8_t *p)
-{
-    return (uint16_t)p[0] | ((uint16_t)p[1] << 8);
-}
-
-static uint32_t
-read_u32_le(const uint8_t *p)
-{
-    return (uint32_t)p[0]
-        | ((uint32_t)p[1] << 8)
-        | ((uint32_t)p[2] << 16)
-        | ((uint32_t)p[3] << 24);
-}
-
-static uint32_t
-read_u32_be(const uint8_t *p)
-{
-    return ((uint32_t)p[0] << 24)
-        | ((uint32_t)p[1] << 16)
-        | ((uint32_t)p[2] << 8)
-        | (uint32_t)p[3];
-}
-
-static int32_t
-read_i32_le(const uint8_t *p)
-{
-    return (int32_t)read_u32_le(p);
-}
-
-static void
-write_u32_be(uint8_t *p, uint32_t v)
-{
-    p[0] = (uint8_t)((v >> 24) & 0xFF);
-    p[1] = (uint8_t)((v >> 16) & 0xFF);
-    p[2] = (uint8_t)((v >> 8) & 0xFF);
-    p[3] = (uint8_t)(v & 0xFF);
-}
-
-static uint32_t
-png_crc32(const uint8_t *data, Py_ssize_t len)
-{
-    uint32_t crc = 0xFFFFFFFFU;
-    Py_ssize_t i;
-    int j;
-    for (i = 0; i < len; i++) {
-        crc ^= (uint32_t)data[i];
-        for (j = 0; j < 8; j++) {
-            if (crc & 1U) {
-                crc = (crc >> 1) ^ 0xEDB88320U;
-            } else {
-                crc >>= 1;
-            }
-        }
-    }
-    return crc ^ 0xFFFFFFFFU;
-}
-
-static int
-paeth_predictor(int a, int b, int c)
-{
-    int p = a + b - c;
-    int pa = p > a ? p - a : a - p;
-    int pb = p > b ? p - b : b - p;
-    int pc = p > c ? p - c : c - p;
-    if (pa <= pb && pa <= pc) {
-        return a;
-    }
-    if (pb <= pc) {
-        return b;
-    }
-    return c;
-}
-
-static void
-expand_packed_grayscale_row(const uint8_t *row, int width, int bit_depth, uint8_t *out_row)
-{
-    int x;
-    int max_sample = (1 << bit_depth) - 1;
-    uint8_t mask = (uint8_t)max_sample;
-
-    for (x = 0; x < width; x++) {
-        int bit_pos = x * bit_depth;
-        int byte_idx = bit_pos / 8;
-        int shift = 8 - bit_depth - (bit_pos % 8);
-        uint8_t sample = (uint8_t)((row[byte_idx] >> shift) & mask);
-        out_row[x] = (uint8_t)((sample * 255) / max_sample);
-    }
 }
 
 static int
@@ -126,6 +40,261 @@ mode_to_rgb(const uint8_t *src, const char *mode, uint8_t *r, uint8_t *g, uint8_
         return 0;
     }
     return -1;
+}
+
+static PyObject *
+build_decode_result(const char *mode, int width, int height, PyObject *pixels)
+{
+    PyObject *mode_obj = PyUnicode_FromString(mode);
+    PyObject *width_obj = PyLong_FromLong(width);
+    PyObject *height_obj = PyLong_FromLong(height);
+    PyObject *result;
+
+    if (mode_obj == NULL || width_obj == NULL || height_obj == NULL) {
+        Py_XDECREF(mode_obj);
+        Py_XDECREF(width_obj);
+        Py_XDECREF(height_obj);
+        Py_DECREF(pixels);
+        return NULL;
+    }
+
+    result = PyTuple_New(4);
+    if (result == NULL) {
+        Py_DECREF(mode_obj);
+        Py_DECREF(width_obj);
+        Py_DECREF(height_obj);
+        Py_DECREF(pixels);
+        return NULL;
+    }
+
+    PyTuple_SET_ITEM(result, 0, mode_obj);
+    PyTuple_SET_ITEM(result, 1, width_obj);
+    PyTuple_SET_ITEM(result, 2, height_obj);
+    PyTuple_SET_ITEM(result, 3, pixels);
+    return result;
+}
+
+typedef struct {
+    const uint8_t *data;
+    size_t size;
+    size_t offset;
+} PngReadState;
+
+static void
+png_read_cb(png_structp png_ptr, png_bytep out, png_size_t bytes)
+{
+    PngReadState *state = (PngReadState *)png_get_io_ptr(png_ptr);
+    if (state == NULL || state->offset + bytes > state->size) {
+        png_error(png_ptr, "PNG read out of range");
+        return;
+    }
+    memcpy(out, state->data + state->offset, bytes);
+    state->offset += bytes;
+}
+
+typedef struct {
+    uint8_t *data;
+    size_t size;
+    size_t cap;
+} PngWriteState;
+
+static int
+png_write_reserve(PngWriteState *state, size_t need)
+{
+    uint8_t *new_data;
+    size_t new_cap;
+
+    if (state->size + need <= state->cap) {
+        return 0;
+    }
+
+    new_cap = state->cap == 0 ? 8192 : state->cap;
+    while (new_cap < state->size + need) {
+        if (new_cap > (SIZE_MAX / 2)) {
+            return -1;
+        }
+        new_cap *= 2;
+    }
+
+    new_data = (uint8_t *)PyMem_Realloc(state->data, new_cap);
+    if (new_data == NULL) {
+        return -1;
+    }
+
+    state->data = new_data;
+    state->cap = new_cap;
+    return 0;
+}
+
+static void
+png_write_cb(png_structp png_ptr, png_bytep data, png_size_t length)
+{
+    PngWriteState *state = (PngWriteState *)png_get_io_ptr(png_ptr);
+    if (state == NULL || png_write_reserve(state, (size_t)length) != 0) {
+        png_error(png_ptr, "PNG write OOM");
+        return;
+    }
+    memcpy(state->data + state->size, data, length);
+    state->size += length;
+}
+
+static void
+png_flush_cb(png_structp png_ptr)
+{
+    (void)png_ptr;
+}
+
+static int
+decode_png_to_mode_pixels(
+    const uint8_t *png_data,
+    size_t png_size,
+    const char **out_mode,
+    int *out_width,
+    int *out_height,
+    PyObject **out_pixels
+)
+{
+    png_structp png_ptr = NULL;
+    png_infop info_ptr = NULL;
+    PngReadState read_state;
+    png_bytep *rows = NULL;
+    int width;
+    int height;
+    int bit_depth;
+    int color_type;
+    int has_alpha;
+    const char *mode;
+    int channels;
+    png_size_t rowbytes;
+    PyObject *pixels = NULL;
+    uint8_t *dst;
+    int y;
+
+    *out_mode = NULL;
+    *out_width = 0;
+    *out_height = 0;
+    *out_pixels = NULL;
+
+    if (png_size < 8 || png_sig_cmp((png_bytep)png_data, 0, 8) != 0) {
+        PyErr_SetString(PyExc_ValueError, "Only PNG images are supported.");
+        return -1;
+    }
+
+    png_ptr = png_create_read_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+    if (png_ptr == NULL) {
+        PyErr_SetString(PyExc_RuntimeError, "Failed to create libpng read struct.");
+        return -1;
+    }
+
+    info_ptr = png_create_info_struct(png_ptr);
+    if (info_ptr == NULL) {
+        png_destroy_read_struct(&png_ptr, NULL, NULL);
+        PyErr_SetString(PyExc_RuntimeError, "Failed to create libpng info struct.");
+        return -1;
+    }
+
+    if (setjmp(png_jmpbuf(png_ptr))) {
+        if (rows != NULL) {
+            PyMem_Free(rows);
+        }
+        Py_XDECREF(pixels);
+        png_destroy_read_struct(&png_ptr, &info_ptr, NULL);
+        PyErr_SetString(PyExc_ValueError, "libpng decode failed.");
+        return -1;
+    }
+
+    read_state.data = png_data;
+    read_state.size = png_size;
+    read_state.offset = 0;
+
+    png_set_read_fn(png_ptr, &read_state, png_read_cb);
+    png_read_info(png_ptr, info_ptr);
+
+    width = (int)png_get_image_width(png_ptr, info_ptr);
+    height = (int)png_get_image_height(png_ptr, info_ptr);
+    bit_depth = png_get_bit_depth(png_ptr, info_ptr);
+    color_type = png_get_color_type(png_ptr, info_ptr);
+    has_alpha =
+        (color_type == PNG_COLOR_TYPE_GRAY_ALPHA)
+        || (color_type == PNG_COLOR_TYPE_RGBA)
+        || (png_get_valid(png_ptr, info_ptr, PNG_INFO_tRNS) != 0);
+
+    if (width <= 0 || height <= 0) {
+        png_error(png_ptr, "Invalid PNG size");
+    }
+
+    if (bit_depth == 16) {
+        png_set_strip_16(png_ptr);
+    }
+
+    if (color_type == PNG_COLOR_TYPE_PALETTE) {
+        png_set_palette_to_rgb(png_ptr);
+    }
+
+    if (color_type == PNG_COLOR_TYPE_GRAY && bit_depth < 8) {
+        png_set_expand_gray_1_2_4_to_8(png_ptr);
+    }
+
+    if (png_get_valid(png_ptr, info_ptr, PNG_INFO_tRNS) != 0) {
+        png_set_tRNS_to_alpha(png_ptr);
+        has_alpha = 1;
+    }
+
+    if (has_alpha) {
+        if (color_type == PNG_COLOR_TYPE_GRAY || color_type == PNG_COLOR_TYPE_GRAY_ALPHA) {
+            png_set_gray_to_rgb(png_ptr);
+        }
+        mode = "RGBA";
+        channels = 4;
+        if (!(color_type == PNG_COLOR_TYPE_GRAY_ALPHA || color_type == PNG_COLOR_TYPE_RGBA)) {
+            png_set_add_alpha(png_ptr, 0xFF, PNG_FILLER_AFTER);
+        }
+    } else if (color_type == PNG_COLOR_TYPE_GRAY || color_type == PNG_COLOR_TYPE_GRAY_ALPHA) {
+        mode = "L";
+        channels = 1;
+        if (color_type == PNG_COLOR_TYPE_GRAY_ALPHA) {
+            png_set_strip_alpha(png_ptr);
+        }
+    } else {
+        mode = "RGB";
+        channels = 3;
+        if (color_type == PNG_COLOR_TYPE_RGBA || color_type == PNG_COLOR_TYPE_GRAY_ALPHA) {
+            png_set_strip_alpha(png_ptr);
+        }
+    }
+
+    png_read_update_info(png_ptr, info_ptr);
+    rowbytes = png_get_rowbytes(png_ptr, info_ptr);
+    if ((size_t)rowbytes != (size_t)width * (size_t)channels) {
+        png_error(png_ptr, "Unexpected PNG row bytes");
+    }
+
+    pixels = PyBytes_FromStringAndSize(NULL, (Py_ssize_t)width * height * channels);
+    if (pixels == NULL) {
+        png_error(png_ptr, "OOM");
+    }
+
+    dst = (uint8_t *)PyBytes_AS_STRING(pixels);
+    rows = (png_bytep *)PyMem_Malloc(sizeof(png_bytep) * (size_t)height);
+    if (rows == NULL) {
+        png_error(png_ptr, "OOM");
+    }
+
+    for (y = 0; y < height; y++) {
+        rows[y] = dst + (size_t)y * (size_t)width * (size_t)channels;
+    }
+
+    png_read_image(png_ptr, rows);
+    png_read_end(png_ptr, NULL);
+
+    PyMem_Free(rows);
+    png_destroy_read_struct(&png_ptr, &info_ptr, NULL);
+
+    *out_mode = mode;
+    *out_width = width;
+    *out_height = height;
+    *out_pixels = pixels;
+    return 0;
 }
 
 static PyObject *
@@ -303,16 +472,7 @@ cimage_resize_nearest(PyObject *self, PyObject *args)
 
     (void)self;
 
-    if (!PyArg_ParseTuple(
-            args,
-            "y*siiii",
-            &in_buf,
-            &mode,
-            &src_w,
-            &src_h,
-            &dst_w,
-            &dst_h
-        )) {
+    if (!PyArg_ParseTuple(args, "y*siiii", &in_buf, &mode, &src_w, &src_h, &dst_w, &dst_h)) {
         return NULL;
     }
 
@@ -365,302 +525,28 @@ cimage_resize_nearest(PyObject *self, PyObject *args)
 }
 
 static PyObject *
-build_decode_result(const char *mode, int width, int height, PyObject *pixels)
-{
-    PyObject *mode_obj = PyUnicode_FromString(mode);
-    PyObject *width_obj = PyLong_FromLong(width);
-    PyObject *height_obj = PyLong_FromLong(height);
-    PyObject *result;
-
-    if (mode_obj == NULL || width_obj == NULL || height_obj == NULL) {
-        Py_XDECREF(mode_obj);
-        Py_XDECREF(width_obj);
-        Py_XDECREF(height_obj);
-        Py_DECREF(pixels);
-        return NULL;
-    }
-    result = PyTuple_New(4);
-    if (result == NULL) {
-        Py_DECREF(mode_obj);
-        Py_DECREF(width_obj);
-        Py_DECREF(height_obj);
-        Py_DECREF(pixels);
-        return NULL;
-    }
-    PyTuple_SET_ITEM(result, 0, mode_obj);
-    PyTuple_SET_ITEM(result, 1, width_obj);
-    PyTuple_SET_ITEM(result, 2, height_obj);
-    PyTuple_SET_ITEM(result, 3, pixels);
-    return result;
-}
-
-static PyObject *
 cimage_decode_png_8bit(PyObject *self, PyObject *args)
 {
     Py_buffer in_buf;
-    const uint8_t *data;
-    Py_ssize_t len;
-    Py_ssize_t idx;
-    int width = 0;
-    int height = 0;
-    int bit_depth = 0;
-    int color_type = 0;
-    int compression = 0;
-    int flt = 0;
-    int interlace = 0;
-    int channels = 0;
-    int grayscale_packed = 0;
-    PyObject *idat = NULL;
-    Py_ssize_t idat_len = 0;
-    uint8_t *idat_ptr = NULL;
-    PyObject *zlib_mod = NULL;
-    PyObject *raw_obj = NULL;
-    const uint8_t *raw;
-    Py_ssize_t raw_len;
-    Py_ssize_t expected;
-    PyObject *out = NULL;
-    uint8_t *out_ptr;
-    Py_ssize_t stride;
-    uint8_t *prev = NULL;
-    uint8_t *row = NULL;
-    int y;
+    const char *mode;
+    int width;
+    int height;
+    PyObject *pixels;
 
     (void)self;
 
     if (!PyArg_ParseTuple(args, "y*", &in_buf)) {
         return NULL;
     }
-    data = (const uint8_t *)in_buf.buf;
-    len = in_buf.len;
 
-    if (len < 8 || memcmp(data, "\x89PNG\r\n\x1a\n", 8) != 0) {
-        PyBuffer_Release(&in_buf);
-        PyErr_SetString(PyExc_ValueError, "Only PNG images are supported.");
-        return NULL;
-    }
-
-    idx = 8;
-    idat = PyBytes_FromStringAndSize(NULL, 0);
-    if (idat == NULL) {
+    if (decode_png_to_mode_pixels((const uint8_t *)in_buf.buf, (size_t)in_buf.len, &mode, &width, &height, &pixels)
+        != 0) {
         PyBuffer_Release(&in_buf);
         return NULL;
     }
 
-    while (1) {
-        uint32_t chunk_len;
-        const uint8_t *ctype;
-        const uint8_t *payload;
-        if (idx + 8 > len) {
-            Py_DECREF(idat);
-            PyBuffer_Release(&in_buf);
-            PyErr_SetString(PyExc_ValueError, "Invalid PNG: missing chunk length.");
-            return NULL;
-        }
-        chunk_len = read_u32_be(data + idx);
-        idx += 4;
-        ctype = data + idx;
-        idx += 4;
-        if (idx + (Py_ssize_t)chunk_len + 4 > len) {
-            Py_DECREF(idat);
-            PyBuffer_Release(&in_buf);
-            PyErr_SetString(PyExc_ValueError, "Invalid PNG: broken chunk payload.");
-            return NULL;
-        }
-        payload = data + idx;
-        idx += chunk_len;
-        idx += 4; /* crc */
-
-        if (memcmp(ctype, "IHDR", 4) == 0) {
-            if (chunk_len != 13) {
-                Py_DECREF(idat);
-                PyBuffer_Release(&in_buf);
-                PyErr_SetString(PyExc_ValueError, "Invalid PNG: missing IHDR.");
-                return NULL;
-            }
-            width = (int)read_u32_be(payload);
-            height = (int)read_u32_be(payload + 4);
-            bit_depth = payload[8];
-            color_type = payload[9];
-            compression = payload[10];
-            flt = payload[11];
-            interlace = payload[12];
-            if (compression != 0 || flt != 0 || interlace != 0) {
-                Py_DECREF(idat);
-                PyBuffer_Release(&in_buf);
-                PyErr_SetString(PyExc_ValueError, "Unsupported PNG compression/filter/interlace.");
-                return NULL;
-            }
-            if (!(color_type == 0 || color_type == 2 || color_type == 6)) {
-                Py_DECREF(idat);
-                PyBuffer_Release(&in_buf);
-                PyErr_SetString(PyExc_ValueError, "Only grayscale/RGB/RGBA PNG is supported.");
-                return NULL;
-            }
-            if (color_type == 0) {
-                if (!(bit_depth == 1 || bit_depth == 2 || bit_depth == 4 || bit_depth == 8)) {
-                    Py_DECREF(idat);
-                    PyBuffer_Release(&in_buf);
-                    PyErr_SetString(PyExc_ValueError, "Only grayscale PNG bit depth 1/2/4/8 is supported.");
-                    return NULL;
-                }
-            } else if (bit_depth != 8) {
-                Py_DECREF(idat);
-                PyBuffer_Release(&in_buf);
-                PyErr_SetString(PyExc_ValueError, "Only 8-bit RGB/RGBA PNG is supported.");
-                return NULL;
-            }
-        } else if (memcmp(ctype, "IDAT", 4) == 0) {
-            Py_ssize_t old_len = PyBytes_GET_SIZE(idat);
-            PyObject *new_idat = PyBytes_FromStringAndSize(NULL, old_len + chunk_len);
-            if (new_idat == NULL) {
-                Py_DECREF(idat);
-                PyBuffer_Release(&in_buf);
-                return NULL;
-            }
-            memcpy(PyBytes_AS_STRING(new_idat), PyBytes_AS_STRING(idat), (size_t)old_len);
-            memcpy(PyBytes_AS_STRING(new_idat) + old_len, payload, chunk_len);
-            Py_DECREF(idat);
-            idat = new_idat;
-        } else if (memcmp(ctype, "IEND", 4) == 0) {
-            break;
-        }
-    }
-
-    idat_len = PyBytes_GET_SIZE(idat);
-    if (width <= 0 || height <= 0) {
-        Py_DECREF(idat);
-        PyBuffer_Release(&in_buf);
-        PyErr_SetString(PyExc_ValueError, "Invalid PNG: missing IHDR.");
-        return NULL;
-    }
-    if (idat_len <= 0) {
-        Py_DECREF(idat);
-        PyBuffer_Release(&in_buf);
-        PyErr_SetString(PyExc_ValueError, "Invalid PNG: missing IDAT.");
-        return NULL;
-    }
-
-    channels = color_type == 0 ? 1 : (color_type == 2 ? 3 : 4);
-    grayscale_packed = (color_type == 0 && bit_depth < 8) ? 1 : 0;
-    if (grayscale_packed) {
-        stride = ((Py_ssize_t)width * bit_depth + 7) / 8;
-    } else {
-        stride = (Py_ssize_t)width * channels;
-    }
-    expected = (stride + 1) * height;
-    idat_ptr = (uint8_t *)PyBytes_AS_STRING(idat);
-
-    zlib_mod = PyImport_ImportModule("zlib");
-    if (zlib_mod == NULL) {
-        Py_DECREF(idat);
-        PyBuffer_Release(&in_buf);
-        return NULL;
-    }
-    raw_obj = PyObject_CallMethod(zlib_mod, "decompress", "y#", idat_ptr, idat_len);
-    Py_DECREF(zlib_mod);
-    Py_DECREF(idat);
-    if (raw_obj == NULL) {
-        PyBuffer_Release(&in_buf);
-        return NULL;
-    }
-    if (!PyBytes_Check(raw_obj)) {
-        Py_DECREF(raw_obj);
-        PyBuffer_Release(&in_buf);
-        PyErr_SetString(PyExc_ValueError, "Invalid PNG data length.");
-        return NULL;
-    }
-    raw = (const uint8_t *)PyBytes_AS_STRING(raw_obj);
-    raw_len = PyBytes_GET_SIZE(raw_obj);
-    if (raw_len != expected) {
-        Py_DECREF(raw_obj);
-        PyBuffer_Release(&in_buf);
-        PyErr_SetString(PyExc_ValueError, "Invalid PNG data length.");
-        return NULL;
-    }
-
-    if (color_type == 0) {
-        out = PyBytes_FromStringAndSize(NULL, (Py_ssize_t)width * height);
-    } else {
-        out = PyBytes_FromStringAndSize(NULL, (Py_ssize_t)width * height * channels);
-    }
-    if (out == NULL) {
-        Py_DECREF(raw_obj);
-        PyBuffer_Release(&in_buf);
-        return NULL;
-    }
-    out_ptr = (uint8_t *)PyBytes_AS_STRING(out);
-    prev = (uint8_t *)PyMem_Calloc((size_t)stride, 1);
-    row = (uint8_t *)PyMem_Malloc((size_t)stride);
-    if (prev == NULL || row == NULL) {
-        Py_XDECREF(out);
-        Py_DECREF(raw_obj);
-        PyBuffer_Release(&in_buf);
-        if (prev != NULL) {
-            PyMem_Free(prev);
-        }
-        if (row != NULL) {
-            PyMem_Free(row);
-        }
-        PyErr_NoMemory();
-        return NULL;
-    }
-
-    for (y = 0; y < height; y++) {
-        Py_ssize_t src = (stride + 1) * y;
-        int filter_type = raw[src];
-        Py_ssize_t i;
-        src += 1;
-        memcpy(row, raw + src, (size_t)stride);
-        if (filter_type == 1) {
-            for (i = 0; i < stride; i++) {
-                uint8_t left = i >= channels ? row[i - channels] : 0;
-                row[i] = (uint8_t)((row[i] + left) & 0xFF);
-            }
-        } else if (filter_type == 2) {
-            for (i = 0; i < stride; i++) {
-                row[i] = (uint8_t)((row[i] + prev[i]) & 0xFF);
-            }
-        } else if (filter_type == 3) {
-            for (i = 0; i < stride; i++) {
-                uint8_t left = i >= channels ? row[i - channels] : 0;
-                uint8_t up = prev[i];
-                row[i] = (uint8_t)((row[i] + ((left + up) / 2)) & 0xFF);
-            }
-        } else if (filter_type == 4) {
-            for (i = 0; i < stride; i++) {
-                int left = i >= channels ? row[i - channels] : 0;
-                int up = prev[i];
-                int up_left = i >= channels ? prev[i - channels] : 0;
-                row[i] = (uint8_t)((row[i] + paeth_predictor(left, up, up_left)) & 0xFF);
-            }
-        } else if (filter_type != 0) {
-            PyMem_Free(prev);
-            PyMem_Free(row);
-            Py_DECREF(raw_obj);
-            Py_DECREF(out);
-            PyBuffer_Release(&in_buf);
-            PyErr_Format(PyExc_ValueError, "Unsupported PNG filter type: %d", filter_type);
-            return NULL;
-        }
-        if (grayscale_packed) {
-            expand_packed_grayscale_row(row, width, bit_depth, out_ptr + (Py_ssize_t)y * width);
-        } else {
-            memcpy(out_ptr + (Py_ssize_t)y * stride, row, (size_t)stride);
-        }
-        memcpy(prev, row, (size_t)stride);
-    }
-
-    PyMem_Free(prev);
-    PyMem_Free(row);
-    Py_DECREF(raw_obj);
     PyBuffer_Release(&in_buf);
-    if (color_type == 0) {
-        return build_decode_result("L", width, height, out);
-    }
-    if (color_type == 2) {
-        return build_decode_result("RGB", width, height, out);
-    }
-    return build_decode_result("RGBA", width, height, out);
+    return build_decode_result(mode, width, height, pixels);
 }
 
 static PyObject *
@@ -672,28 +558,19 @@ cimage_encode_png_8bit(PyObject *self, PyObject *args)
     int height;
     int channels;
     int color_type;
-    Py_ssize_t stride;
-    Py_ssize_t raw_len;
-    PyObject *raw_obj = NULL;
-    uint8_t *raw_ptr;
+    png_structp png_ptr = NULL;
+    png_infop info_ptr = NULL;
+    PngWriteState state;
+    png_bytep *rows = NULL;
     int y;
-    PyObject *zlib_mod = NULL;
-    PyObject *compressed = NULL;
-    uint8_t *comp_ptr;
-    Py_ssize_t comp_len;
-    Py_ssize_t out_len;
-    PyObject *out = NULL;
-    uint8_t *out_ptr;
-    uint8_t ihdr_payload[13];
-    uint8_t crc_buf[4 + 13];
-    uint32_t crc;
-    Py_ssize_t pos = 0;
+    PyObject *out;
 
     (void)self;
 
     if (!PyArg_ParseTuple(args, "y*sii", &in_buf, &mode, &width, &height)) {
         return NULL;
     }
+
     channels = channels_from_mode(mode);
     if (channels < 0) {
         PyBuffer_Release(&in_buf);
@@ -712,161 +589,222 @@ cimage_encode_png_8bit(PyObject *self, PyObject *args)
     }
 
     if (channels == 1) {
-        color_type = 0;
+        color_type = PNG_COLOR_TYPE_GRAY;
     } else if (channels == 3) {
-        color_type = 2;
-    } else if (channels == 4) {
-        color_type = 6;
+        color_type = PNG_COLOR_TYPE_RGB;
     } else {
+        color_type = PNG_COLOR_TYPE_RGBA;
+    }
+
+    state.data = NULL;
+    state.size = 0;
+    state.cap = 0;
+
+    png_ptr = png_create_write_struct(PNG_LIBPNG_VER_STRING, NULL, NULL, NULL);
+    if (png_ptr == NULL) {
         PyBuffer_Release(&in_buf);
-        PyErr_SetString(PyExc_ValueError, "Unsupported mode.");
+        PyErr_SetString(PyExc_RuntimeError, "Failed to create libpng write struct.");
         return NULL;
     }
 
-    stride = (Py_ssize_t)width * channels;
-    raw_len = (stride + 1) * height;
-    raw_obj = PyBytes_FromStringAndSize(NULL, raw_len);
-    if (raw_obj == NULL) {
+    info_ptr = png_create_info_struct(png_ptr);
+    if (info_ptr == NULL) {
+        png_destroy_write_struct(&png_ptr, NULL);
         PyBuffer_Release(&in_buf);
+        PyErr_SetString(PyExc_RuntimeError, "Failed to create libpng info struct.");
         return NULL;
-    }
-    raw_ptr = (uint8_t *)PyBytes_AS_STRING(raw_obj);
-    for (y = 0; y < height; y++) {
-        Py_ssize_t dst = (stride + 1) * y;
-        Py_ssize_t src = stride * y;
-        raw_ptr[dst] = 0;
-        memcpy(raw_ptr + dst + 1, (const uint8_t *)in_buf.buf + src, (size_t)stride);
     }
 
-    zlib_mod = PyImport_ImportModule("zlib");
-    if (zlib_mod == NULL) {
-        Py_DECREF(raw_obj);
-        PyBuffer_Release(&in_buf);
-        return NULL;
-    }
-    compressed = PyObject_CallMethod(zlib_mod, "compress", "y#i", raw_ptr, raw_len, 6);
-    Py_DECREF(zlib_mod);
-    Py_DECREF(raw_obj);
-    if (compressed == NULL) {
-        PyBuffer_Release(&in_buf);
-        return NULL;
-    }
-    if (!PyBytes_Check(compressed)) {
-        Py_DECREF(compressed);
-        PyBuffer_Release(&in_buf);
-        PyErr_SetString(PyExc_ValueError, "Failed to encode PNG.");
-        return NULL;
-    }
-    comp_ptr = (uint8_t *)PyBytes_AS_STRING(compressed);
-    comp_len = PyBytes_GET_SIZE(compressed);
-
-    out_len = 8 + (12 + 13) + (12 + comp_len) + 12;
-    out = PyBytes_FromStringAndSize(NULL, out_len);
-    if (out == NULL) {
-        Py_DECREF(compressed);
-        PyBuffer_Release(&in_buf);
-        return NULL;
-    }
-    out_ptr = (uint8_t *)PyBytes_AS_STRING(out);
-    memcpy(out_ptr + pos, "\x89PNG\r\n\x1a\n", 8);
-    pos += 8;
-
-    write_u32_be(out_ptr + pos, 13);
-    pos += 4;
-    memcpy(out_ptr + pos, "IHDR", 4);
-    pos += 4;
-    write_u32_be(ihdr_payload, (uint32_t)width);
-    write_u32_be(ihdr_payload + 4, (uint32_t)height);
-    ihdr_payload[8] = 8;
-    ihdr_payload[9] = (uint8_t)color_type;
-    ihdr_payload[10] = 0;
-    ihdr_payload[11] = 0;
-    ihdr_payload[12] = 0;
-    memcpy(out_ptr + pos, ihdr_payload, 13);
-    pos += 13;
-    memcpy(crc_buf, "IHDR", 4);
-    memcpy(crc_buf + 4, ihdr_payload, 13);
-    crc = png_crc32(crc_buf, 17);
-    write_u32_be(out_ptr + pos, crc);
-    pos += 4;
-
-    write_u32_be(out_ptr + pos, (uint32_t)comp_len);
-    pos += 4;
-    memcpy(out_ptr + pos, "IDAT", 4);
-    pos += 4;
-    memcpy(out_ptr + pos, comp_ptr, (size_t)comp_len);
-    pos += comp_len;
-    crc = png_crc32((const uint8_t *)"IDAT", 4);
-    crc = png_crc32(comp_ptr, comp_len) ^ (crc ^ 0xFFFFFFFFU); /* combine with simple xor chain */
-    /* fallback exact crc by contiguous buffer */
-    {
-        uint8_t *tmp = (uint8_t *)PyMem_Malloc((size_t)(4 + comp_len));
-        if (tmp == NULL) {
-            Py_DECREF(compressed);
-            Py_DECREF(out);
-            PyBuffer_Release(&in_buf);
-            PyErr_NoMemory();
-            return NULL;
+    if (setjmp(png_jmpbuf(png_ptr))) {
+        if (rows != NULL) {
+            PyMem_Free(rows);
         }
-        memcpy(tmp, "IDAT", 4);
-        memcpy(tmp + 4, comp_ptr, (size_t)comp_len);
-        crc = png_crc32(tmp, 4 + comp_len);
-        PyMem_Free(tmp);
+        if (state.data != NULL) {
+            PyMem_Free(state.data);
+        }
+        png_destroy_write_struct(&png_ptr, &info_ptr);
+        PyBuffer_Release(&in_buf);
+        PyErr_SetString(PyExc_ValueError, "libpng encode failed.");
+        return NULL;
     }
-    write_u32_be(out_ptr + pos, crc);
-    pos += 4;
 
-    write_u32_be(out_ptr + pos, 0);
-    pos += 4;
-    memcpy(out_ptr + pos, "IEND", 4);
-    pos += 4;
-    crc = png_crc32((const uint8_t *)"IEND", 4);
-    write_u32_be(out_ptr + pos, crc);
-    pos += 4;
+    png_set_write_fn(png_ptr, &state, png_write_cb, png_flush_cb);
+    png_set_IHDR(
+        png_ptr,
+        info_ptr,
+        (png_uint_32)width,
+        (png_uint_32)height,
+        8,
+        color_type,
+        PNG_INTERLACE_NONE,
+        PNG_COMPRESSION_TYPE_DEFAULT,
+        PNG_FILTER_TYPE_DEFAULT
+    );
 
-    Py_DECREF(compressed);
+    png_write_info(png_ptr, info_ptr);
+
+    rows = (png_bytep *)PyMem_Malloc(sizeof(png_bytep) * (size_t)height);
+    if (rows == NULL) {
+        png_error(png_ptr, "OOM");
+    }
+
+    for (y = 0; y < height; y++) {
+        rows[y] = (png_bytep)((const uint8_t *)in_buf.buf + (size_t)y * (size_t)width * (size_t)channels);
+    }
+
+    png_write_image(png_ptr, rows);
+    png_write_end(png_ptr, info_ptr);
+
+    PyMem_Free(rows);
+    png_destroy_write_struct(&png_ptr, &info_ptr);
     PyBuffer_Release(&in_buf);
+
+    out = PyBytes_FromStringAndSize((const char *)state.data, (Py_ssize_t)state.size);
+    if (state.data != NULL) {
+        PyMem_Free(state.data);
+    }
     return out;
 }
 
 static PyObject *
-cimage_threshold_to_bits(PyObject *self, PyObject *args)
+cimage_decode_jpeg_turbo(PyObject *self, PyObject *args)
 {
     Py_buffer in_buf;
-    const char *mode;
-    int width;
-    int height;
-    int threshold;
-    int channels;
+    tjhandle handle = NULL;
+    int width = 0;
+    int height = 0;
+    int jpeg_subsamp = 0;
+    int jpeg_colorspace = 0;
+    PyObject *pixels = NULL;
+    unsigned char *dst;
+
+    (void)self;
+
+    if (!PyArg_ParseTuple(args, "y*", &in_buf)) {
+        return NULL;
+    }
+
+    handle = tjInitDecompress();
+    if (handle == NULL) {
+        PyBuffer_Release(&in_buf);
+        PyErr_SetString(PyExc_RuntimeError, "tjInitDecompress failed.");
+        return NULL;
+    }
+
+    if (tjDecompressHeader3(
+            handle,
+            (const unsigned char *)in_buf.buf,
+            (unsigned long)in_buf.len,
+            &width,
+            &height,
+            &jpeg_subsamp,
+            &jpeg_colorspace
+        ) != 0) {
+        tjDestroy(handle);
+        PyBuffer_Release(&in_buf);
+        PyErr_SetString(PyExc_ValueError, tjGetErrorStr());
+        return NULL;
+    }
+
+    (void)jpeg_subsamp;
+    (void)jpeg_colorspace;
+
+    if (width <= 0 || height <= 0) {
+        tjDestroy(handle);
+        PyBuffer_Release(&in_buf);
+        PyErr_SetString(PyExc_ValueError, "Invalid JPEG size.");
+        return NULL;
+    }
+
+    pixels = PyBytes_FromStringAndSize(NULL, (Py_ssize_t)width * height * 3);
+    if (pixels == NULL) {
+        tjDestroy(handle);
+        PyBuffer_Release(&in_buf);
+        return NULL;
+    }
+
+    dst = (unsigned char *)PyBytes_AS_STRING(pixels);
+    if (tjDecompress2(
+            handle,
+            (const unsigned char *)in_buf.buf,
+            (unsigned long)in_buf.len,
+            dst,
+            width,
+            0,
+            height,
+            TJPF_RGB,
+            TJFLAG_FASTDCT
+        ) != 0) {
+        tjDestroy(handle);
+        Py_DECREF(pixels);
+        PyBuffer_Release(&in_buf);
+        PyErr_SetString(PyExc_ValueError, tjGetErrorStr());
+        return NULL;
+    }
+
+    tjDestroy(handle);
+    PyBuffer_Release(&in_buf);
+    return Py_BuildValue("(iiN)", width, height, pixels);
+}
+
+static PyObject *
+cimage_decode_webp_lib(PyObject *self, PyObject *args)
+{
+    Py_buffer in_buf;
+    int width = 0;
+    int height = 0;
+    uint8_t *decoded = NULL;
+    PyObject *pixels = NULL;
+
+    (void)self;
+
+    if (!PyArg_ParseTuple(args, "y*", &in_buf)) {
+        return NULL;
+    }
+
+    decoded = WebPDecodeRGBA((const uint8_t *)in_buf.buf, (size_t)in_buf.len, &width, &height);
+    if (decoded == NULL || width <= 0 || height <= 0) {
+        PyBuffer_Release(&in_buf);
+        PyErr_SetString(PyExc_ValueError, "WebP decode failed.");
+        return NULL;
+    }
+
+    pixels = PyBytes_FromStringAndSize((const char *)decoded, (Py_ssize_t)width * height * 4);
+    WebPFree(decoded);
+    PyBuffer_Release(&in_buf);
+
+    if (pixels == NULL) {
+        return NULL;
+    }
+
+    return Py_BuildValue("(iiN)", width, height, pixels);
+}
+
+static PyObject *
+threshold_to_bits_raw(
+    const uint8_t *src,
+    const char *mode,
+    int width,
+    int height,
+    int threshold
+)
+{
+    int channels = channels_from_mode(mode);
     Py_ssize_t pixels;
-    const uint8_t *src;
     PyObject *out;
     uint8_t *dst;
     Py_ssize_t i;
 
-    (void)self;
-
-    if (!PyArg_ParseTuple(args, "y*siii", &in_buf, &mode, &width, &height, &threshold)) {
-        return NULL;
-    }
-
-    channels = channels_from_mode(mode);
     if (channels < 0) {
-        PyBuffer_Release(&in_buf);
         PyErr_SetString(PyExc_ValueError, "Unsupported mode.");
         return NULL;
     }
     if (width <= 0 || height <= 0) {
-        PyBuffer_Release(&in_buf);
         PyErr_SetString(PyExc_ValueError, "Invalid image size.");
         return NULL;
     }
+
     pixels = (Py_ssize_t)width * (Py_ssize_t)height;
-    if (in_buf.len != pixels * channels) {
-        PyBuffer_Release(&in_buf);
-        PyErr_SetString(PyExc_ValueError, "Raw data length mismatch.");
-        return NULL;
-    }
     if (threshold < 0) {
         threshold = 0;
     }
@@ -876,10 +814,8 @@ cimage_threshold_to_bits(PyObject *self, PyObject *args)
 
     out = PyBytes_FromStringAndSize(NULL, pixels);
     if (out == NULL) {
-        PyBuffer_Release(&in_buf);
         return NULL;
     }
-    src = (const uint8_t *)in_buf.buf;
     dst = (uint8_t *)PyBytes_AS_STRING(out);
 
     if (channels == 1) {
@@ -905,44 +841,62 @@ cimage_threshold_to_bits(PyObject *self, PyObject *args)
         }
     }
 
+    return out;
+}
+
+static PyObject *
+cimage_threshold_to_bits(PyObject *self, PyObject *args)
+{
+    Py_buffer in_buf;
+    const char *mode;
+    int width;
+    int height;
+    int threshold;
+    int channels;
+    Py_ssize_t pixels;
+    const uint8_t *src;
+    PyObject *out;
+
+    (void)self;
+
+    if (!PyArg_ParseTuple(args, "y*siii", &in_buf, &mode, &width, &height, &threshold)) {
+        return NULL;
+    }
+
+    channels = channels_from_mode(mode);
+    if (channels < 0) {
+        PyBuffer_Release(&in_buf);
+        PyErr_SetString(PyExc_ValueError, "Unsupported mode.");
+        return NULL;
+    }
+    if (width <= 0 || height <= 0) {
+        PyBuffer_Release(&in_buf);
+        PyErr_SetString(PyExc_ValueError, "Invalid image size.");
+        return NULL;
+    }
+    pixels = (Py_ssize_t)width * (Py_ssize_t)height;
+    if (in_buf.len != pixels * channels) {
+        PyBuffer_Release(&in_buf);
+        PyErr_SetString(PyExc_ValueError, "Raw data length mismatch.");
+        return NULL;
+    }
+
+    src = (const uint8_t *)in_buf.buf;
+    out = threshold_to_bits_raw(src, mode, width, height, threshold);
     PyBuffer_Release(&in_buf);
     return out;
 }
 
 static PyObject *
-cimage_sixel_encode_mono(PyObject *self, PyObject *args)
+sixel_encode_from_bits_raw(const uint8_t *bits, int width, int height)
 {
-    Py_buffer bits_buf;
-    int width;
-    int height;
     int y;
-    Py_ssize_t expected;
-    const uint8_t *bits;
     PyObject *parts;
     PyObject *sep;
     PyObject *result;
 
-    (void)self;
-
-    if (!PyArg_ParseTuple(args, "y*ii", &bits_buf, &width, &height)) {
-        return NULL;
-    }
-    if (width <= 0 || height <= 0) {
-        PyBuffer_Release(&bits_buf);
-        PyErr_SetString(PyExc_ValueError, "Invalid image size.");
-        return NULL;
-    }
-    expected = (Py_ssize_t)width * (Py_ssize_t)height;
-    if (bits_buf.len != expected) {
-        PyBuffer_Release(&bits_buf);
-        PyErr_SetString(PyExc_ValueError, "Bits length mismatch.");
-        return NULL;
-    }
-
-    bits = (const uint8_t *)bits_buf.buf;
     parts = PyList_New(0);
     if (parts == NULL) {
-        PyBuffer_Release(&bits_buf);
         return NULL;
     }
 
@@ -975,7 +929,6 @@ cimage_sixel_encode_mono(PyObject *self, PyObject *args)
                 PyMem_Free(black_buf);
             }
             Py_DECREF(parts);
-            PyBuffer_Release(&bits_buf);
             PyErr_NoMemory();
             return NULL;
         }
@@ -995,6 +948,7 @@ cimage_sixel_encode_mono(PyObject *self, PyObject *args)
             white_buf[x] = (char)(white_val + 63);
             black_buf[x] = (char)(black_val + 63);
         }
+
         white_end = width;
         black_end = width;
         while (white_end > 0 && white_buf[white_end - 1] == '?') {
@@ -1003,10 +957,12 @@ cimage_sixel_encode_mono(PyObject *self, PyObject *args)
         while (black_end > 0 && black_buf[black_end - 1] == '?') {
             black_end--;
         }
+
         white_line = PyUnicode_FromStringAndSize(white_buf, white_end);
         black_line = PyUnicode_FromStringAndSize(black_buf, black_end);
         PyMem_Free(white_buf);
         PyMem_Free(black_buf);
+
         if (white_line == NULL || black_line == NULL) {
             Py_XDECREF(white_prefix);
             Py_XDECREF(white_line);
@@ -1015,7 +971,6 @@ cimage_sixel_encode_mono(PyObject *self, PyObject *args)
             Py_XDECREF(black_line);
             Py_XDECREF(dash);
             Py_DECREF(parts);
-            PyBuffer_Release(&bits_buf);
             return NULL;
         }
 
@@ -1034,7 +989,6 @@ cimage_sixel_encode_mono(PyObject *self, PyObject *args)
             Py_DECREF(black_line);
             Py_DECREF(dash);
             Py_DECREF(parts);
-            PyBuffer_Release(&bits_buf);
             return NULL;
         }
 
@@ -1049,12 +1003,44 @@ cimage_sixel_encode_mono(PyObject *self, PyObject *args)
     sep = PyUnicode_FromString("");
     if (sep == NULL) {
         Py_DECREF(parts);
-        PyBuffer_Release(&bits_buf);
         return NULL;
     }
     result = PyUnicode_Join(sep, parts);
     Py_DECREF(sep);
     Py_DECREF(parts);
+    return result;
+}
+
+static PyObject *
+cimage_sixel_encode_mono(PyObject *self, PyObject *args)
+{
+    Py_buffer bits_buf;
+    int width;
+    int height;
+    Py_ssize_t expected;
+    const uint8_t *bits;
+    PyObject *result;
+
+    (void)self;
+
+    if (!PyArg_ParseTuple(args, "y*ii", &bits_buf, &width, &height)) {
+        return NULL;
+    }
+    if (width <= 0 || height <= 0) {
+        PyBuffer_Release(&bits_buf);
+        PyErr_SetString(PyExc_ValueError, "Invalid image size.");
+        return NULL;
+    }
+
+    expected = (Py_ssize_t)width * (Py_ssize_t)height;
+    if (bits_buf.len != expected) {
+        PyBuffer_Release(&bits_buf);
+        PyErr_SetString(PyExc_ValueError, "Bits length mismatch.");
+        return NULL;
+    }
+
+    bits = (const uint8_t *)bits_buf.buf;
+    result = sixel_encode_from_bits_raw(bits, width, height);
     PyBuffer_Release(&bits_buf);
     return result;
 }
@@ -1063,8 +1049,10 @@ static PyMethodDef cimage_methods[] = {
     {"convert", cimage_convert, METH_VARARGS, "Convert image mode."},
     {"getbbox_nonwhite", cimage_getbbox_nonwhite, METH_VARARGS, "Get non-white bbox."},
     {"resize_nearest", cimage_resize_nearest, METH_VARARGS, "Nearest resize."},
-    {"decode_png_8bit", cimage_decode_png_8bit, METH_VARARGS, "Decode PNG bytes to raw image."},
-    {"encode_png_8bit", cimage_encode_png_8bit, METH_VARARGS, "Encode raw image to PNG bytes."},
+    {"decode_png_8bit", cimage_decode_png_8bit, METH_VARARGS, "Decode PNG bytes via libpng."},
+    {"encode_png_8bit", cimage_encode_png_8bit, METH_VARARGS, "Encode raw image to PNG via libpng."},
+    {"decode_jpeg_turbo", cimage_decode_jpeg_turbo, METH_VARARGS, "Decode JPEG bytes via libturbojpeg."},
+    {"decode_webp_lib", cimage_decode_webp_lib, METH_VARARGS, "Decode WEBP bytes via libwebp."},
     {"threshold_to_bits", cimage_threshold_to_bits, METH_VARARGS, "Threshold image to 0/1 bits."},
     {"sixel_encode_mono", cimage_sixel_encode_mono, METH_VARARGS, "Encode mono bits to sixel body."},
     {NULL, NULL, 0, NULL},
@@ -1073,7 +1061,7 @@ static PyMethodDef cimage_methods[] = {
 static struct PyModuleDef cimage_module = {
     PyModuleDef_HEAD_INIT,
     "_cimage",
-    "Optional C acceleration for SimpleImage.",
+    "C acceleration backend for terminal_qrcode.",
     -1,
     cimage_methods,
 };

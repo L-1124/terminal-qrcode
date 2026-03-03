@@ -8,7 +8,7 @@ rm -rf "${OUT_DIR}"
 mkdir -p "${OUT_DIR}"
 
 brew update
-brew install jpeg-turbo libpng webp libsixel
+brew install jpeg-turbo libpng webp
 
 copy_with_alias() {
   local src="$1"
@@ -47,12 +47,6 @@ libwebp_path="$(resolve_first_match "${BREW_PREFIX}/opt/webp/lib/libwebp"*.dylib
   exit 1
 }
 copy_with_alias "${libwebp_path}" "libwebp.dylib"
-
-libsixel_path="$(resolve_first_match "${BREW_PREFIX}/opt/libsixel/lib/libsixel"*.dylib)" || {
-  echo "libsixel shared library not found on macOS runner." >&2
-  exit 1
-}
-copy_with_alias "${libsixel_path}" "libsixel.dylib"
 
 echo "Bundled macOS libraries:"
 ls -al "${OUT_DIR}"
