@@ -1,0 +1,71 @@
+[project]
+name = "terminal-qrcode"
+description = "A terminal image renderer with support for iTerm2, Kitty and fallback modes."
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [
+  { name = "Luren", email = "68656403+luren-dc@users.noreply.github.com" }
+]
+dependencies = []
+dynamic = ["version"]
+
+[dependency-groups]
+dev = [
+  "pre-commit>=4.5.1",
+  "pyrefly>=0.1.0",
+  "pytest>=7.4.0",
+  "ruff>=0.1.0",
+  "setuptools>=82.0.0",
+]
+
+[build-system]
+requires = ["setuptools>=80.0.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[tool.cibuildwheel]
+build = ["cp310-*", "cp311-*", "cp312-*", "cp313-*"]
+skip = "*-musllinux_*"
+
+[tool.cibuildwheel.linux]
+archs = ["x86_64", "aarch64"]
+
+[tool.cibuildwheel.macos]
+archs = ["x86_64", "arm64"]
+
+[tool.commitizen]
+name = "cz_gitmoji"
+
+[tool.pyrefly]
+project-includes = ["src", "tests"]
+python-version = "3.10"
+python-platform = "Linux"
+
+[tool.pyright]
+pythonVersion = "3.10"
+pythonPlatform = "Linux"
+
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+
+[tool.ruff.lint]
+select = [
+  "E",
+  "F",
+  "I",
+  "N",
+  "UP",
+  "B",
+  "A",
+  "D",
+  "C4",
+  "T20",
+  "RET",
+]
+ignore = ["D203", "D212"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.dynamic]
+version = { attr = "terminal_qrcode.__version__" }
