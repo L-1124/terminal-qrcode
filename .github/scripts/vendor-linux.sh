@@ -9,16 +9,22 @@ mkdir -p "${OUT_DIR}"
 
 install_deps() {
   if command -v dnf >/dev/null 2>&1; then
-    dnf -y install libjpeg-turbo libpng libwebp
+    dnf -y install libjpeg-turbo libjpeg-turbo-devel libpng libpng-devel libwebp libwebp-devel
     return
   fi
   if command -v yum >/dev/null 2>&1; then
-    yum -y install libjpeg-turbo libpng libwebp
+    yum -y install libjpeg-turbo libjpeg-turbo-devel libpng libpng-devel libwebp libwebp-devel
     return
   fi
   if command -v apt-get >/dev/null 2>&1; then
     apt-get update
-    apt-get install -y libturbojpeg0 libpng16-16 libwebp7
+    apt-get install -y \
+      libturbojpeg0 \
+      libturbojpeg0-dev \
+      libpng16-16 \
+      libpng-dev \
+      libwebp7 \
+      libwebp-dev
     return
   fi
   echo "Unsupported package manager on Linux runner." >&2

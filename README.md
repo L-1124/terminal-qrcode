@@ -65,6 +65,15 @@ python -m terminal_qrcode <image_path> [options]
 - `--ascii-only`
 - `--debug`
 
+## 🐧 Linux 构建依赖
+
+如果在 Linux 上执行 `uv run pytest` / `uv run ruff check .` 时遇到 `turbojpeg.h: No such file or directory`，请先安装 C 扩展头文件依赖：
+
+```bash
+sudo apt-get update
+sudo apt-get install -y build-essential libturbojpeg0-dev libpng-dev libwebp-dev
+```
+
 ## 🛠️ 本地开发依赖自举（Windows）
 
 本地开发可显式执行依赖自举命令（Windows 优先支持）：
