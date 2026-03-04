@@ -50,6 +50,45 @@ jobs:
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+
+      - name: Cache cibuildwheel (Linux)
+        if: runner.os == 'Linux'
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/cibuildwheel
+          key: release-cibw-${{ runner.os }}-${{ matrix.cibw_archs }}-${{ hashFiles('pyproject.toml', '.github/workflows/release.yml', '.github/scripts/vendor-linux.sh') }}
+          restore-keys: |
+            release-cibw-${{ runner.os }}-${{ matrix.cibw_archs }}-
+
+      - name: Cache cibuildwheel (macOS)
+        if: runner.os == 'macOS'
+        uses: actions/cache@v4
+        with:
+          path: ~/Library/Caches/cibuildwheel
+          key: release-cibw-${{ runner.os }}-${{ matrix.cibw_archs }}-${{ hashFiles('pyproject.toml', '.github/workflows/release.yml', '.github/scripts/vendor-macos.sh') }}
+          restore-keys: |
+            release-cibw-${{ runner.os }}-${{ matrix.cibw_archs }}-
+
+      - name: Cache cibuildwheel (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: ~\AppData\Local\pypa\cibuildwheel\Cache
+          key: release-cibw-${{ runner.os }}-${{ matrix.cibw_archs }}-${{ hashFiles('pyproject.toml', '.github/workflows/release.yml', '.github/scripts/vendor-windows.ps1') }}
+          restore-keys: |
+            release-cibw-${{ runner.os }}-${{ matrix.cibw_archs }}-
+
+      - name: Cache vcpkg (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/vcpkg
+          key: release-vcpkg-${{ runner.os }}-${{ hashFiles('.github/scripts/vendor-windows.ps1') }}
+          restore-keys: |
+            release-vcpkg-${{ runner.os }}-
 
       - name: Install build-essential (Linux)
         if: runner.os == 'Linux'
@@ -145,6 +184,9 @@ jobs:
 
       - name: Set up uv
         uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
 
       - name: Install build-essential
         run: |

@@ -35,6 +35,15 @@ jobs:
           enable-cache: true
           cache-dependency-glob: uv.lock
 
+      - name: Cache vcpkg (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/vcpkg
+          key: testing-vcpkg-${{ runner.os }}-${{ hashFiles('.github/scripts/vendor-windows.ps1') }}
+          restore-keys: |
+            testing-vcpkg-${{ runner.os }}-
+
       - name: Sync dependencies
         run: uv sync --group dev --no-install-project
 
@@ -67,6 +76,15 @@ jobs:
         with:
           enable-cache: true
           cache-dependency-glob: uv.lock
+
+      - name: Cache vcpkg (Windows)
+        if: runner.os == 'Windows'
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/vcpkg
+          key: testing-vcpkg-${{ runner.os }}-${{ hashFiles('.github/scripts/vendor-windows.ps1') }}
+          restore-keys: |
+            testing-vcpkg-${{ runner.os }}-
 
       - name: Install dependencies (Linux)
         if: runner.os == 'Linux'
