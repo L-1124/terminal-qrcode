@@ -3,6 +3,12 @@ name: testing
 on:
   push:
     branches: [main]
+    paths:
+      - "src/**"
+      - "tests/**"
+      - "pyproject.toml"
+      - ".github/workflows/testing.yml"
+      
   pull_request:
     branches: [main]
 
@@ -30,13 +36,13 @@ jobs:
           cache-dependency-glob: uv.lock
 
       - name: Sync dependencies
-        run: uv sync --group dev
+        run: uv sync --group dev --no-install-project
 
       - name: Run Ruff Check
-        run: uv run ruff check .
+        run: uv run --no-project ruff check .
 
       - name: Run Pyrefly Check
-        run: uv run pyrefly check
+        run: uv run --no-project pyrefly check
 
   test:
     name: Test on ${{ matrix.os }} (Python ${{ matrix.python-version }})
