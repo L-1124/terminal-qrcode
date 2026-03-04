@@ -13,20 +13,24 @@ jobs:
   build_wheels:
     name: Build wheels (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
-    env:
-      CIBW_ARCHS_LINUX: "x86_64 aarch64"
-      CIBW_ARCHS_MACOS: "x86_64 arm64"
-      CIBW_ARCHS_WINDOWS: AMD64
-      CIBW_BEFORE_ALL_LINUX: bash .github/scripts/vendor-linux.sh
-      CIBW_BEFORE_ALL_MACOS: bash .github/scripts/vendor-macos.sh
-      CIBW_BEFORE_ALL_WINDOWS: powershell -ExecutionPolicy Bypass -File .github/scripts/vendor-windows.ps1
     strategy:
       fail-fast: false
       matrix:
-        os:
-          - ubuntu-latest
-          - windows-latest
-          - macos-latest
+        include:
+          - os: ubuntu-latest
+            cibw-archs: "x86_64 aarch64"
+          - os: macos-15-intel
+            cibw-archs: "x86_64"
+          - os: macos-latest
+            cibw-archs: "arm64"
+          - os: windows-latest
+            cibw-archs: "AMD64"
+    env:
+      CIBW_ARCHS: ${{ matrix.cibw-archs }}
+      CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=15.0
+      CIBW_BEFORE_ALL_LINUX: bash .github/scripts/vendor-linux.sh
+      CIBW_BEFORE_ALL_MACOS: bash .github/scripts/vendor-macos.sh
+      CIBW_BEFORE_ALL_WINDOWS: powershell -ExecutionPolicy Bypass -File .github/scripts/vendor-windows.ps1
 
     steps:
       - name: Checkout
@@ -46,50 +50,25 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y build-essential
 
+      - name: Set Windows build paths
+        if: runner.os == 'Windows'
+        shell: bash
+        run: |
+          VCPKG_INSTALLED="$RUNNER_TEMP/vcpkg/installed/x64-windows-static"
+          echo "CIMAGE_INCLUDE_DIRS=$VCPKG_INSTALLED/include" >> "$GITHUB_ENV"
+          echo "CIMAGE_LIBRARY_DIRS=$VCPKG_INSTALLED/lib" >> "$GITHUB_ENV"
+
       - name: Build wheels with cibuildwheel
         run: uvx --from cibuildwheel==2.23.3 cibuildwheel --output-dir dist
 
-      - name: Validate bundled vendor libraries in wheel
+      - name: Validate C extension in wheel
         shell: python
         run: |
           import glob
           import os
-          import zipfile
-          from pathlib import PurePosixPath
-
-          runner_os = os.environ["RUNNER_OS"]
-          platform_dir = {"Linux": "linux", "macOS": "macos", "Windows": "windows"}[runner_os]
-          required = ["libpng", "libwebp"]
-          if runner_os == "Windows":
-              required.append("turbojpeg")
-          else:
-              required.append("libturbojpeg")
-
-          wheels = sorted(glob.glob("dist/*.whl"))
-          if not wheels:
-              raise SystemExit("No wheel file found in dist/")
-
-          for wheel_path in wheels:
-              with zipfile.ZipFile(wheel_path, "r") as zf:
-                  names = [n for n in zf.namelist() if "/_vendor/" in f"/{n}" and not n.endswith("/")]
-
-              for needle in required:
-                  ok = any(
-                      f"/_vendor/{platform_dir}/" in f"/{name}"
-                      and needle in PurePosixPath(name).name.lower()
-                      for name in names
-                  )
-                  if not ok:
-                      raise SystemExit(f"Missing vendor library for '{needle}' in {wheel_path}")
-
-              print(f"Wheel vendor validation passed for {wheel_path} on {runner_os}")
-
-      - name: Validate runtime dynamic library loading
-        shell: python
-        run: |
-          import glob
-          import os
+          import re
           import subprocess
+          import sys
           import tempfile
           import venv
           from pathlib import Path
@@ -98,26 +77,32 @@ jobs:
           wheels = sorted(glob.glob("dist/*.whl"))
           if not wheels:
               raise SystemExit("No wheel file found in dist/")
+          interp_tag = f"cp{sys.version_info.major}{sys.version_info.minor}"
+          supported = [
+              wheel for wheel in wheels if re.search(rf"-{interp_tag}-{interp_tag}-", Path(wheel).name)
+          ]
+          if not supported:
+              print(f"No wheel matching interpreter tag {interp_tag}; skip smoke validation.")
+              raise SystemExit(0)
           code = "\n".join(
               [
-                  "import os",
                   "from terminal_qrcode.simple_image import SimpleImage",
                   "from terminal_qrcode import codecs",
                   "",
                   "png = SimpleImage.new('RGB', (1, 1), (1, 2, 3)).to_png_bytes()",
                   "mode, width, height, data = codecs.decode_png_with_libpng(png)",
                   "if mode != 'RGB' or width != 1 or height != 1 or len(data) != 3:",
-                  "    raise SystemExit('PNG pure-C backend smoke test failed')",
+                  "    raise SystemExit('PNG C backend smoke test failed')",
                   "",
                   "for name in ['decode_jpeg_rgb', 'decode_webp_rgba']:",
                   "    if not hasattr(codecs, name):",
-                  "        raise SystemExit(f'missing compatibility API: {name}')",
+                  "        raise SystemExit(f'missing API: {name}')",
                   "",
-                  "print('Runtime library load checks passed.')",
+                  "print('C extension smoke test passed.')",
               ]
           )
-          for wheel_path in wheels:
-              venv_dir = Path(tempfile.mkdtemp(prefix="tq-wheel-check-"))
+          for wheel_path in supported:
+              venv_dir = Path(tempfile.mkdtemp(prefix="tq-check-"))
               venv.create(venv_dir, with_pip=True, clear=True)
 
               if runner_os == "Windows":
@@ -129,7 +114,7 @@ jobs:
               subprocess.run([str(py), "-m", "pip", "install", wheel_path], check=True)
 
               subprocess.run([str(py), "-c", code], check=True)
-              print(f"Runtime library load checks passed for {wheel_path}")
+              print(f"C extension smoke test passed for {wheel_path}")
 
       - name: Upload wheel artifacts
         uses: actions/upload-artifact@v4

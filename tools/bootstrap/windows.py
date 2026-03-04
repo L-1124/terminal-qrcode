@@ -7,9 +7,9 @@ from collections.abc import Callable
 from pathlib import Path
 
 REQUIRED_PORTS = [
-    "libjpeg-turbo:x64-windows",
-    "libpng:x64-windows",
-    "libwebp:x64-windows",
+    "libjpeg-turbo:x64-windows-static",
+    "libpng:x64-windows-static",
+    "libwebp[core]:x64-windows-static",
 ]
 
 
@@ -57,24 +57,4 @@ def bootstrap_windows(
 
     run_command([str(vcpkg_exe), "--disable-metrics", "install", *REQUIRED_PORTS], vcpkg_root)
 
-    bin_dir = vcpkg_root / "installed" / "x64-windows" / "bin"
-    if not bin_dir.exists():
-        raise RuntimeError(f"vcpkg bin directory not found: {bin_dir}")
-
-    _copy_required(bin_dir / "turbojpeg.dll", vendor_dir, "turbojpeg.dll")
-    _copy_required(bin_dir / "jpeg62.dll", vendor_dir, "jpeg62.dll")
-    _copy_required(bin_dir / "libwebp.dll", vendor_dir, "libwebp.dll")
-    _copy_required(bin_dir / "libsharpyuv.dll", vendor_dir, "libsharpyuv.dll")
-    _copy_required(bin_dir / "zlib1.dll", vendor_dir, "zlib1.dll")
-
-    libpng_candidates = sorted(bin_dir.glob("libpng*.dll"))
-    if not libpng_candidates:
-        raise RuntimeError("Required dynamic library not found: libpng*.dll")
-    libpng_primary = libpng_candidates[0]
-    shutil.copy2(libpng_primary, vendor_dir / libpng_primary.name)
-    if not (vendor_dir / "libpng16-16.dll").exists():
-        shutil.copy2(libpng_primary, vendor_dir / "libpng16-16.dll")
-    if not (vendor_dir / "libpng16.dll").exists():
-        shutil.copy2(libpng_primary, vendor_dir / "libpng16.dll")
-
-    return sorted(path.name for path in vendor_dir.glob("*.dll"))
+    return []  # No DLLs bundled in static mode

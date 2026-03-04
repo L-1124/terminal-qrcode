@@ -69,13 +69,6 @@ ignore = ["D203", "D212"]
 [tool.setuptools]
 include-package-data = true
 
-[tool.setuptools.package-data]
-terminal_qrcode = [
-  "_vendor/**/*.dll",
-  "_vendor/**/*.so",
-  "_vendor/**/*.so.*",
-  "_vendor/**/*.dylib",
-]
 
 [tool.setuptools.packages.find]
 where = ["src"]
