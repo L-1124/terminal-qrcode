@@ -65,9 +65,7 @@ python -m terminal_qrcode <image_path> [options]
 - `--ascii-only`
 - `--debug`
 
-## 🛠️ 本地开发依赖自举（Windows）
-
-本地开发可显式执行依赖自举命令（Windows 优先支持）：
+## 🛠️ 本地开发依赖（Windows）
 
 ```bash
 uv sync
