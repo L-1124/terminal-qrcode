@@ -3,7 +3,7 @@
 import dataclasses
 import logging
 from collections.abc import Generator
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
 from terminal_qrcode.contracts import (
     ImageInput,
@@ -13,35 +13,20 @@ from terminal_qrcode.contracts import (
     TerminalCapability,
 )
 from terminal_qrcode.renderers import (
-    HalfBlockRenderer,
-    ITerm2Renderer,
-    KittyRenderer,
     RendererRegistry,
-    SixelRenderer,
-    WezTermRenderer,
-    _matrix_to_image,
-    _should_tmux_wrap,
-    _sixel_encode_mono,
-    _threshold_to_bits,
-    _tmux_allow_passthrough,
-    _tmux_wrap,
     build_default_renderer_registry,
 )
 from terminal_qrcode.simple_image import SimpleImage
 
 logger = logging.getLogger(__name__)
 
+if TYPE_CHECKING:
+    from terminal_qrcode._cimage import PixelMode
+else:
+    PixelMode: TypeAlias = Literal["L", "RGB", "RGBA"]
+
 DEFAULT_RENDERER_REGISTRY: RendererRegistry[Renderer] = build_default_renderer_registry()
-_MODE_CHANNELS: dict[str, int] = {"L": 1, "RGB": 3, "RGBA": 4}
-
-
-class RendererFactory:
-    """渲染器工厂."""
-
-    @staticmethod
-    def get_renderer(cap: TerminalCapability) -> Renderer:
-        """根据终端能力返回对应的渲染器实例."""
-        return DEFAULT_RENDERER_REGISTRY.get(cap)
+_MODE_CHANNELS: dict[PixelMode, int] = {"L": 1, "RGB": 3, "RGBA": 4}
 
 
 def _merge_config(config: RenderConfig | None, overrides: dict[str, object]) -> RenderConfig:
@@ -90,13 +75,14 @@ def _to_simple_image(payload: ImageInput) -> SimpleImage:
         raise TypeError("payload must be a SimpleImage or ImageProtocol instance.")
 
     image_obj: ImageProtocol = payload
-    mode = image_obj.mode
-    if mode not in _MODE_CHANNELS:
+    mode_raw = image_obj.mode
+    if mode_raw not in _MODE_CHANNELS:
         image_obj = image_obj.convert("RGBA")
-        mode = image_obj.mode
+        mode_raw = image_obj.mode
 
-    if mode not in _MODE_CHANNELS:
+    if mode_raw not in _MODE_CHANNELS:
         raise TypeError("payload image mode must be one of: L, RGB, RGBA.")
+    mode = cast(PixelMode, mode_raw)
 
     width, height = image_obj.size
     if width <= 0 or height <= 0:
@@ -128,7 +114,7 @@ def run_pipeline(
     render_payload = _normalize_payload(payload, final_config)
     capability = _resolve_capability(final_config)
     logger.debug("Selected capability: %s", capability.name)
-    renderer = RendererFactory.get_renderer(capability)
+    renderer = DEFAULT_RENDERER_REGISTRY.get(capability)
     yield from renderer.render(render_payload, final_config)
 
 
@@ -136,19 +122,7 @@ __all__ = [
     "RenderConfig",
     "Renderer",
     "TerminalCapability",
-    "RendererFactory",
     "run_pipeline",
-    "HalfBlockRenderer",
-    "KittyRenderer",
-    "ITerm2Renderer",
-    "WezTermRenderer",
-    "SixelRenderer",
     "RendererRegistry",
     "DEFAULT_RENDERER_REGISTRY",
-    "_matrix_to_image",
-    "_threshold_to_bits",
-    "_sixel_encode_mono",
-    "_tmux_allow_passthrough",
-    "_should_tmux_wrap",
-    "_tmux_wrap",
 ]

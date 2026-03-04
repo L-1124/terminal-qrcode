@@ -1,10 +1,9 @@
 """轻量级图像模块."""
 
-import enum
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Literal, cast
+from typing import TYPE_CHECKING, Literal, TypeAlias, cast
 
 from terminal_qrcode import _cimage
 from terminal_qrcode.codecs import (
@@ -21,13 +20,18 @@ from terminal_qrcode.codecs import (
     encode_png_with_libpng,
 )
 
+if TYPE_CHECKING:
+    from terminal_qrcode._cimage import PixelMode
+else:
+    PixelMode: TypeAlias = Literal["L", "RGB", "RGBA"]
+
 
 @dataclass(frozen=True)
 class _ModeInfo:
     channels: int
 
 
-_MODES: dict[str, _ModeInfo] = {
+_MODES: dict[PixelMode, _ModeInfo] = {
     "L": _ModeInfo(channels=1),
     "RGB": _ModeInfo(channels=3),
     "RGBA": _ModeInfo(channels=4),
@@ -39,13 +43,12 @@ logger = logging.getLogger(__name__)
 class SimpleImage:
     """轻量级图像对象."""
 
-    class Resampling(enum.Enum):
-        """采样模式."""
+    mode: PixelMode
+    width: int
+    height: int
+    _data: bytearray
 
-        NEAREST = 0
-        LANCZOS = 1
-
-    def __init__(self, mode: str, size: tuple[int, int], data: bytes | bytearray):
+    def __init__(self, mode: PixelMode, size: tuple[int, int], data: bytes | bytearray):
         """构建图像对象."""
         if mode not in _MODES:
             raise ValueError(f"Unsupported mode: {mode}")
@@ -63,7 +66,7 @@ class SimpleImage:
     @classmethod
     def new(
         cls,
-        mode: str,
+        mode: PixelMode,
         size: tuple[int, int],
         color: int | tuple[int, ...] | str = 0,
     ) -> "SimpleImage":
@@ -114,7 +117,7 @@ class SimpleImage:
         try:
             width, height, rgb = decode_jpeg_rgb(jpeg_data)
             logger.debug("SimpleImage JPEG decode: using C backend.")
-            return cls("RGB", (width, height), rgb)
+            return cls(cast(PixelMode, "RGB"), (width, height), rgb)
         except TurboJpegUnavailableError as exc:
             logger.debug("SimpleImage JPEG decode: C backend unavailable. err=%r", exc)
             raise ValueError("JPEG decode requires C backend (turbojpeg).") from exc
@@ -127,7 +130,7 @@ class SimpleImage:
         try:
             width, height, rgba = decode_webp_rgba(webp_data)
             logger.debug("SimpleImage WEBP decode: using C backend.")
-            return cls("RGBA", (width, height), rgba)
+            return cls(cast(PixelMode, "RGBA"), (width, height), rgba)
         except WebPUnavailableError as exc:
             logger.debug("SimpleImage WEBP decode: C backend unavailable. err=%r", exc)
             raise ValueError("WEBP decode requires C backend (libwebp).") from exc
@@ -161,103 +164,16 @@ class SimpleImage:
         for i, val in enumerate(pixel):
             self._data[idx + i] = val
 
-    def convert(self, mode: str) -> "SimpleImage":
+    def convert(self, mode: PixelMode) -> "SimpleImage":
         """转换图像模式."""
         if mode not in _MODES:
             raise ValueError(f"Unsupported mode: {mode}")
         if mode == self.mode:
             return self.copy()
 
-        try:
-            src_mode = cast(Literal["L", "RGB", "RGBA"], self.mode)
-            dst_mode = cast(Literal["L", "RGB", "RGBA"], mode)
-            out = _cimage.convert(bytes(self._data), src_mode, dst_mode, self.width, self.height)
-            return SimpleImage(mode, (self.width, self.height), out)
-        except Exception:  # noqa: BLE001
-            pass
-
-        data = self._data
-        pixels = self.width * self.height
-
-        if self.mode == "L" and mode == "RGB":
-            out = bytearray(pixels * 3)
-            out_idx = 0
-            for v in data:
-                out[out_idx : out_idx + 3] = bytes((v, v, v))
-                out_idx += 3
-            return SimpleImage(mode, (self.width, self.height), out)
-
-        if self.mode == "L" and mode == "RGBA":
-            out = bytearray(pixels * 4)
-            out_idx = 0
-            for v in data:
-                out[out_idx : out_idx + 4] = bytes((v, v, v, 255))
-                out_idx += 4
-            return SimpleImage(mode, (self.width, self.height), out)
-
-        if self.mode == "RGB" and mode == "L":
-            out = bytearray(pixels)
-            src = memoryview(data)
-            out_idx = 0
-            for i in range(0, len(data), 3):
-                r = src[i]
-                g = src[i + 1]
-                b = src[i + 2]
-                out[out_idx] = (299 * r + 587 * g + 114 * b) // 1000
-                out_idx += 1
-            return SimpleImage(mode, (self.width, self.height), out)
-
-        if self.mode == "RGB" and mode == "RGBA":
-            out = bytearray(pixels * 4)
-            src = memoryview(data)
-            out_idx = 0
-            for i in range(0, len(data), 3):
-                out[out_idx] = src[i]
-                out[out_idx + 1] = src[i + 1]
-                out[out_idx + 2] = src[i + 2]
-                out[out_idx + 3] = 255
-                out_idx += 4
-            return SimpleImage(mode, (self.width, self.height), out)
-
-        if self.mode == "RGBA" and mode == "RGB":
-            out = bytearray(pixels * 3)
-            src = memoryview(data)
-            out_idx = 0
-            for i in range(0, len(data), 4):
-                out[out_idx] = src[i]
-                out[out_idx + 1] = src[i + 1]
-                out[out_idx + 2] = src[i + 2]
-                out_idx += 3
-            return SimpleImage(mode, (self.width, self.height), out)
-
-        if self.mode == "RGBA" and mode == "L":
-            out = bytearray(pixels)
-            src = memoryview(data)
-            out_idx = 0
-            for i in range(0, len(data), 4):
-                r = src[i]
-                g = src[i + 1]
-                b = src[i + 2]
-                out[out_idx] = (299 * r + 587 * g + 114 * b) // 1000
-                out_idx += 1
-            return SimpleImage(mode, (self.width, self.height), out)
-
-        out = bytearray(self.width * self.height * _MODES[mode].channels)
-        src_channels = _MODES[self.mode].channels
-        dst_channels = _MODES[mode].channels
-        out_idx = 0
-        for i in range(0, len(data), src_channels):
-            rgb = _to_rgb_tuple(self.mode, data[i : i + src_channels])
-            if dst_channels == 1:
-                out[out_idx] = (299 * rgb[0] + 587 * rgb[1] + 114 * rgb[2]) // 1000
-                out_idx += 1
-            elif dst_channels == 3:
-                out[out_idx : out_idx + 3] = bytes(rgb)
-                out_idx += 3
-            else:
-                out[out_idx : out_idx + 4] = bytes((rgb[0], rgb[1], rgb[2], 255))
-                out_idx += 4
-
+        src_mode = self.mode
+        dst_mode = mode
+        out = _cimage.convert(bytes(self._data), src_mode, dst_mode, self.width, self.height)
         return SimpleImage(mode, (self.width, self.height), out)
 
     def crop(self, box: tuple[int, int, int, int]) -> "SimpleImage":
@@ -279,111 +195,35 @@ class SimpleImage:
 
     def getbbox_nonwhite(self) -> tuple[int, int, int, int] | None:
         """返回非白色像素包围盒."""
-        try:
-            mode = cast(Literal["L", "RGB", "RGBA"], self.mode)
-            result = _cimage.getbbox_nonwhite(bytes(self._data), mode, self.width, self.height)
-            if result is None:
-                return None
-            if isinstance(result, tuple) and len(result) == 4:
-                return (
-                    int(result[0]),
-                    int(result[1]),
-                    int(result[2]),
-                    int(result[3]),
-                )
-        except Exception:  # noqa: BLE001
-            pass
-
-        left = self.width
-        top = self.height
-        right = -1
-        bottom = -1
-        width = self.width
-        height = self.height
-        data = self._data
-
-        if self.mode == "L":
-            for y in range(height):
-                row_start = y * width
-                row_has = False
-                for x in range(width):
-                    if data[row_start + x] < 255:
-                        if x < left:
-                            left = x
-                        if x > right:
-                            right = x
-                        row_has = True
-                if row_has:
-                    if y < top:
-                        top = y
-                    bottom = y
-        else:
-            channels = _MODES[self.mode].channels
-            for y in range(height):
-                row_start = y * width * channels
-                row_has = False
-                for x in range(width):
-                    idx = row_start + x * channels
-                    if (
-                        data[idx] < 255
-                        or data[idx + 1] < 255
-                        or data[idx + 2] < 255
-                        or (channels == 4 and data[idx + 3] < 255)
-                    ):
-                        if x < left:
-                            left = x
-                        if x > right:
-                            right = x
-                        row_has = True
-                if row_has:
-                    if y < top:
-                        top = y
-                    bottom = y
-
-        if right < 0:
+        result = _cimage.getbbox_nonwhite(bytes(self._data), self.mode, self.width, self.height)
+        if result is None:
             return None
-        return (left, top, right + 1, bottom + 1)
+        if isinstance(result, tuple) and len(result) == 4:
+            return (
+                int(result[0]),
+                int(result[1]),
+                int(result[2]),
+                int(result[3]),
+            )
+        return None
 
-    def resize(self, size: tuple[int, int], resample: Resampling = Resampling.NEAREST) -> "SimpleImage":
-        """缩放图像."""
-        # 当前仅实现最近邻，保持接口兼容。
-        _ = resample
+    def resize(self, size: tuple[int, int]) -> "SimpleImage":
+        """缩放图像（最近邻采样）."""
         new_w, new_h = size
         if new_w <= 0 or new_h <= 0:
             raise ValueError("Resize target must be positive.")
 
-        try:
-            mode = cast(Literal["L", "RGB", "RGBA"], self.mode)
-            out = _cimage.resize_nearest(
-                bytes(self._data),
-                mode,
-                self.width,
-                self.height,
-                new_w,
-                new_h,
-            )
-            return SimpleImage(self.mode, (new_w, new_h), out)
-        except Exception:  # noqa: BLE001
-            pass
-
-        channels = _MODES[self.mode].channels
-        out = bytearray(new_w * new_h * channels)
-        x_offsets = [(min((x * self.width) // new_w, self.width - 1) * channels) for x in range(new_w)]
-        src_row_stride = self.width * channels
-        dst_row_stride = new_w * channels
-
-        for y in range(new_h):
-            src_y = min((y * self.height) // new_h, self.height - 1)
-            src_row = src_y * src_row_stride
-            dst_row = y * dst_row_stride
-            for x, src_off in enumerate(x_offsets):
-                dst_idx = dst_row + x * channels
-                src_idx = src_row + src_off
-                out[dst_idx : dst_idx + channels] = self._data[src_idx : src_idx + channels]
-
+        out = _cimage.resize_nearest(
+            bytes(self._data),
+            self.mode,
+            self.width,
+            self.height,
+            new_w,
+            new_h,
+        )
         return SimpleImage(self.mode, (new_w, new_h), out)
 
-    def thumbnail(self, size: tuple[int, int], resample: Resampling = Resampling.NEAREST) -> None:
+    def thumbnail(self, size: tuple[int, int]) -> None:
         """原地等比缩略图."""
         max_w, max_h = size
         if self.width <= max_w and self.height <= max_h:
@@ -391,7 +231,7 @@ class SimpleImage:
         ratio = min(max_w / self.width, max_h / self.height)
         new_w = max(1, int(self.width * ratio))
         new_h = max(1, int(self.height * ratio))
-        resized = self.resize((new_w, new_h), resample=resample)
+        resized = self.resize((new_w, new_h))
         self.mode = resized.mode
         self.width = resized.width
         self.height = resized.height
@@ -422,7 +262,7 @@ def _detect_image_type(data: bytes) -> Literal["png", "jpeg", "webp"] | None:
     return None
 
 
-def _normalize_color(mode: str, color: int | tuple[int, ...] | str) -> bytes:
+def _normalize_color(mode: PixelMode, color: int | tuple[int, ...] | str) -> bytes:
     if isinstance(color, str):
         named = {"white": 255, "black": 0}
         if color.lower() not in named:
@@ -431,7 +271,7 @@ def _normalize_color(mode: str, color: int | tuple[int, ...] | str) -> bytes:
     return bytes(_normalize_pixel(mode, color))
 
 
-def _normalize_pixel(mode: str, value: int | tuple[int, ...]) -> tuple[int, ...]:
+def _normalize_pixel(mode: PixelMode, value: int | tuple[int, ...]) -> tuple[int, ...]:
     channels = _MODES[mode].channels
     if isinstance(value, int):
         if channels == 1:
@@ -452,7 +292,7 @@ def _normalize_pixel(mode: str, value: int | tuple[int, ...]) -> tuple[int, ...]
     raise ValueError("Pixel length does not match image mode.")
 
 
-def _to_rgb_tuple(mode: str, data: bytearray | bytes) -> tuple[int, int, int]:
+def _to_rgb_tuple(mode: PixelMode, data: bytearray | bytes) -> tuple[int, int, int]:
     if mode == "L":
         v = data[0]
         return (v, v, v)

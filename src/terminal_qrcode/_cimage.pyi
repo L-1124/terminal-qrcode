@@ -69,3 +69,41 @@ def sixel_encode_mono(
     height: int,
 ) -> str:
     """将 0/1 位图字节编码为 sixel body 字符串."""
+
+def matrix_to_image(
+    bits: bytes,
+    width: int,
+    height: int,
+    scale: int,
+    mode: PixelMode,
+) -> bytes:
+    """将 bool 矩阵栅格化为像素字节."""
+
+def otsu_threshold(
+    data: bytes,
+) -> int:
+    """计算最佳 Otsu 阈值."""
+
+def find_black_bbox_bits(
+    bits: bytes,
+    width: int,
+    height: int,
+) -> tuple[int, int, int, int] | None:
+    """在 0/1 位图中查找黑像素包围盒."""
+
+def sample_matrix_3x3(
+    bits: bytes,
+    width: int,
+    height: int,
+    bbox: tuple[int, int, int, int],
+    size: int,
+) -> bytes:
+    """按 3x3 多数表决采样 QR 矩阵."""
+
+def estimate_module_size(
+    bits: bytes,
+    width: int,
+    height: int,
+    bbox: tuple[int, int, int, int],
+) -> float | None:
+    """估计 QR 模块尺寸."""

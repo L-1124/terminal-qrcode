@@ -1,7 +1,12 @@
 """图像编解码后端整合模块（纯 C 扩展实现）."""
 
 import logging
-from typing import Literal, cast
+from typing import TYPE_CHECKING
+
+from terminal_qrcode import _cimage
+
+if TYPE_CHECKING:
+    from terminal_qrcode._cimage import PixelMode
 
 logger = logging.getLogger(__name__)
 
@@ -48,35 +53,21 @@ class WebPDecodeError(RuntimeError):
     """libwebp 解码失败."""
 
 
-try:
-    from terminal_qrcode import _cimage
-except Exception as exc:  # noqa: BLE001
-    logger.debug("_cimage module unavailable: %r", exc)
-    _cimage = None
-
-
-def decode_png_with_libpng(png_data: bytes) -> tuple[str, int, int, bytes]:
+def decode_png_with_libpng(png_data: bytes) -> tuple[PixelMode, int, int, bytes]:
     """通过 C 扩展 + libpng 解码 PNG."""
-    if _cimage is None:
-        raise PngUnavailableError("libpng backend not available. Build C extension with libpng.")
     try:
         mode, width, height, out = _cimage.decode_png_8bit(png_data)
     except AttributeError as exc:
         raise PngUnavailableError("libpng backend not available. Build C extension with libpng.") from exc
     except Exception as exc:  # noqa: BLE001
         raise PngDecodeError(str(exc) or "decode_png_8bit failed.") from exc
-    return str(mode), int(width), int(height), bytes(out)
+    return mode, int(width), int(height), bytes(out)
 
 
-def encode_png_with_libpng(data: bytes, mode: str, width: int, height: int) -> bytes:
+def encode_png_with_libpng(data: bytes, mode: PixelMode, width: int, height: int) -> bytes:
     """通过 C 扩展 + libpng 编码 PNG."""
-    if _cimage is None:
-        raise PngUnavailableError("libpng backend not available. Build C extension with libpng.")
-    if mode not in {"L", "RGB", "RGBA"}:
-        raise PngEncodeError(f"Unsupported mode for PNG encode: {mode}")
-    mode_literal = cast(Literal["L", "RGB", "RGBA"], mode)
     try:
-        out = _cimage.encode_png_8bit(data, mode_literal, width, height)
+        out = _cimage.encode_png_8bit(data, mode, width, height)
     except AttributeError as exc:
         raise PngUnavailableError("libpng backend not available. Build C extension with libpng.") from exc
     except Exception as exc:  # noqa: BLE001
@@ -86,8 +77,6 @@ def encode_png_with_libpng(data: bytes, mode: str, width: int, height: int) -> b
 
 def decode_jpeg_rgb(jpeg_data: bytes) -> tuple[int, int, bytes]:
     """通过 C 扩展 + turbojpeg 解码 JPEG."""
-    if _cimage is None:
-        raise TurboJpegUnavailableError("TurboJPEG backend not available in _cimage.")
     try:
         width, height, out = _cimage.decode_jpeg_turbo(jpeg_data)
     except AttributeError as exc:
@@ -99,8 +88,6 @@ def decode_jpeg_rgb(jpeg_data: bytes) -> tuple[int, int, bytes]:
 
 def decode_webp_rgba(webp_data: bytes) -> tuple[int, int, bytes]:
     """通过 C 扩展 + libwebp 解码 WEBP."""
-    if _cimage is None:
-        raise WebPUnavailableError("libwebp backend not available in _cimage.")
     try:
         width, height, out = _cimage.decode_webp_lib(webp_data)
     except AttributeError as exc:

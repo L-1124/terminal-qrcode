@@ -1046,6 +1046,412 @@ cimage_sixel_encode_mono(PyObject *self, PyObject *args)
     return result;
 }
 
+static PyObject *
+cimage_matrix_to_image(PyObject *self, PyObject *args)
+{
+    Py_buffer in_buf;
+    int src_w, src_h, scale;
+    const char *mode;
+    int channels;
+    int dst_w, dst_h;
+    PyObject *out;
+    const uint8_t *src;
+    uint8_t *dst;
+    int my, mx, dy, dx;
+    uint8_t white_pixel[4];
+    uint8_t black_pixel[4];
+
+    (void)self;
+
+    if (!PyArg_ParseTuple(args, "y*iiis", &in_buf, &src_w, &src_h, &scale, &mode)) {
+        return NULL;
+    }
+
+    channels = channels_from_mode(mode);
+    if (channels < 0 || channels < 3) {
+        PyBuffer_Release(&in_buf);
+        PyErr_SetString(PyExc_ValueError, "Only RGB and RGBA modes are supported for matrix_to_image.");
+        return NULL;
+    }
+
+    if (src_w <= 0 || src_h <= 0 || scale <= 0) {
+        PyBuffer_Release(&in_buf);
+        PyErr_SetString(PyExc_ValueError, "Invalid dimensions or scale.");
+        return NULL;
+    }
+
+    if (in_buf.len != (Py_ssize_t)src_w * src_h) {
+        PyBuffer_Release(&in_buf);
+        PyErr_SetString(PyExc_ValueError, "Matrix data length mismatch.");
+        return NULL;
+    }
+
+    dst_w = src_w * scale;
+    dst_h = src_h * scale;
+    out = PyBytes_FromStringAndSize(NULL, (Py_ssize_t)dst_w * dst_h * channels);
+    if (out == NULL) {
+        PyBuffer_Release(&in_buf);
+        return NULL;
+    }
+
+    src = (const uint8_t *)in_buf.buf;
+    dst = (uint8_t *)PyBytes_AS_STRING(out);
+
+    memset(white_pixel, 255, (size_t)channels);
+    memset(black_pixel, 0, (size_t)channels);
+    if (channels == 4) black_pixel[3] = 255;
+
+    for (my = 0; my < src_h; my++) {
+        for (mx = 0; mx < src_w; mx++) {
+            uint8_t val = src[my * src_w + mx];
+            const uint8_t *pixel = val ? black_pixel : white_pixel;
+            for (dy = 0; dy < scale; dy++) {
+                int row_base = (my * scale + dy) * dst_w * channels;
+                for (dx = 0; dx < scale; dx++) {
+                    int col_base = (mx * scale + dx) * channels;
+                    memcpy(dst + row_base + col_base, pixel, (size_t)channels);
+                }
+            }
+        }
+    }
+
+    PyBuffer_Release(&in_buf);
+    return out;
+}
+
+static PyObject *
+cimage_otsu_threshold(PyObject *self, PyObject *args)
+{
+    Py_buffer in_buf;
+    const uint8_t *data;
+    Py_ssize_t total;
+    uint32_t hist[256] = {0};
+    double sum_total = 0;
+    double sum_bg = 0;
+    uint32_t weight_bg = 0;
+    uint32_t weight_fg;
+    double max_between = -1.0;
+    int best_threshold = 128;
+    int t;
+    Py_ssize_t i;
+
+    (void)self;
+
+    if (!PyArg_ParseTuple(args, "y*", &in_buf)) {
+        return NULL;
+    }
+
+    data = (const uint8_t *)in_buf.buf;
+    total = in_buf.len;
+    if (total == 0) {
+        PyBuffer_Release(&in_buf);
+        return PyLong_FromLong(128);
+    }
+
+    for (i = 0; i < total; i++) {
+        uint8_t v = data[i];
+        hist[v]++;
+        sum_total += v;
+    }
+
+    for (t = 0; t < 256; t++) {
+        weight_bg += hist[t];
+        if (weight_bg == 0) continue;
+        weight_fg = (uint32_t)total - weight_bg;
+        if (weight_fg == 0) break;
+
+        sum_bg += (double)t * hist[t];
+        double mean_bg = sum_bg / weight_bg;
+        double mean_fg = (sum_total - sum_bg) / weight_fg;
+        double between = (double)weight_bg * (double)weight_fg * (mean_bg - mean_fg) * (mean_bg - mean_fg);
+
+        if (between > max_between) {
+            max_between = between;
+            best_threshold = t;
+        }
+    }
+
+    PyBuffer_Release(&in_buf);
+    return PyLong_FromLong(best_threshold);
+}
+
+static PyObject *
+cimage_find_black_bbox_bits(PyObject *self, PyObject *args)
+{
+    Py_buffer in_buf;
+    int width, height;
+    const uint8_t *bits;
+    int left, top, right, bottom;
+    int y, x;
+
+    (void)self;
+
+    if (!PyArg_ParseTuple(args, "y*ii", &in_buf, &width, &height)) {
+        return NULL;
+    }
+
+    if (in_buf.len != (Py_ssize_t)width * height) {
+        PyBuffer_Release(&in_buf);
+        PyErr_SetString(PyExc_ValueError, "Bits length mismatch.");
+        return NULL;
+    }
+
+    bits = (const uint8_t *)in_buf.buf;
+    left = width;
+    top = height;
+    right = -1;
+    bottom = -1;
+
+    for (y = 0; y < height; y++) {
+        int row_start = y * width;
+        int row_has = 0;
+        for (x = 0; x < width; x++) {
+            if (bits[row_start + x]) {
+                if (x < left) left = x;
+                if (x > right) right = x;
+                row_has = 1;
+            }
+        }
+        if (row_has) {
+            if (y < top) top = y;
+            bottom = y;
+        }
+    }
+
+    PyBuffer_Release(&in_buf);
+
+    if (right < 0) {
+        Py_RETURN_NONE;
+    }
+
+    return Py_BuildValue("(iiii)", left, top, right + 1, bottom + 1);
+}
+
+static PyObject *
+cimage_sample_matrix_3x3(PyObject *self, PyObject *args)
+{
+    Py_buffer in_buf;
+    int width, height, size;
+    int left, top, right, bottom;
+    const uint8_t *bits;
+    PyObject *out;
+    uint8_t *dst;
+    int my, mx;
+    double bw, bh;
+    double offsets[3] = {1.0/6.0, 1.0/2.0, 5.0/6.0};
+
+    (void)self;
+
+    if (!PyArg_ParseTuple(args, "y*ii(iiii)i", &in_buf, &width, &height, &left, &top, &right, &bottom, &size)) {
+        return NULL;
+    }
+
+    if (in_buf.len != (Py_ssize_t)width * height) {
+        PyBuffer_Release(&in_buf);
+        PyErr_SetString(PyExc_ValueError, "Bits length mismatch.");
+        return NULL;
+    }
+
+    bits = (const uint8_t *)in_buf.buf;
+    out = PyBytes_FromStringAndSize(NULL, (Py_ssize_t)size * size);
+    if (out == NULL) {
+        PyBuffer_Release(&in_buf);
+        return NULL;
+    }
+    dst = (uint8_t *)PyBytes_AS_STRING(out);
+
+    bw = (double)(right - left);
+    bh = (double)(bottom - top);
+    if (bw < 1) bw = 1;
+    if (bh < 1) bh = 1;
+
+    for (my = 0; my < size; my++) {
+        double y0 = top + (my * bh) / size;
+        double y1 = top + ((my + 1) * bh) / size;
+        for (mx = 0; mx < size; mx++) {
+            double x0 = left + (mx * bw) / size;
+            double x1 = left + ((mx + 1) * bw) / size;
+            int votes = 0;
+            int oy_idx, ox_idx;
+            for (oy_idx = 0; oy_idx < 3; oy_idx++) {
+                int py = (int)(y0 + offsets[oy_idx] * (y1 - y0));
+                if (py < 0) py = 0;
+                if (py >= height) py = height - 1;
+                for (ox_idx = 0; ox_idx < 3; ox_idx++) {
+                    int px = (int)(x0 + offsets[ox_idx] * (x1 - x0));
+                    if (px < 0) px = 0;
+                    if (px >= width) px = width - 1;
+                    if (bits[py * width + px]) votes++;
+                }
+            }
+            dst[my * size + mx] = (votes >= 5) ? 1 : 0;
+        }
+    }
+
+    PyBuffer_Release(&in_buf);
+    return out;
+}
+
+static PyObject *
+cimage_estimate_module_size(PyObject *self, PyObject *args)
+{
+    Py_buffer in_buf;
+    int width, height;
+    int left, top, right, bottom;
+    const uint8_t *bits;
+    int samples_y[5], samples_x[5];
+    int run_count = 0;
+    int run_cap = 256;
+    int *runs;
+    int i, j;
+    double module_size = -1.0;
+
+    (void)self;
+
+    if (!PyArg_ParseTuple(args, "y*ii(iiii)", &in_buf, &width, &height, &left, &top, &right, &bottom)) {
+        return NULL;
+    }
+
+    if (in_buf.len != (Py_ssize_t)width * height) {
+        PyBuffer_Release(&in_buf);
+        PyErr_SetString(PyExc_ValueError, "Bits length mismatch.");
+        return NULL;
+    }
+
+    if (right <= left || bottom <= top) {
+        PyBuffer_Release(&in_buf);
+        Py_RETURN_NONE;
+    }
+
+    bits = (const uint8_t *)in_buf.buf;
+    runs = (int *)PyMem_Malloc(sizeof(int) * (size_t)run_cap);
+    if (runs == NULL) {
+        PyBuffer_Release(&in_buf);
+        return PyErr_NoMemory();
+    }
+
+    for (i = 0; i < 5; i++) {
+        samples_y[i] = top + ((bottom - top - 1) * i) / 4;
+        samples_x[i] = left + ((right - left - 1) * i) / 4;
+    }
+
+    for (i = 0; i < 5; i++) {
+        int y = samples_y[i];
+        int row_start = y * width;
+        uint8_t prev = bits[row_start + left];
+        int run = 1;
+        for (int x = left + 1; x < right; x++) {
+            uint8_t cur = bits[row_start + x];
+            if (cur == prev) {
+                run++;
+            } else {
+                if (run_count >= run_cap) {
+                    int *new_runs;
+                    run_cap *= 2;
+                    new_runs = (int *)PyMem_Realloc(runs, sizeof(int) * (size_t)run_cap);
+                    if (new_runs == NULL) {
+                        PyMem_Free(runs);
+                        PyBuffer_Release(&in_buf);
+                        return PyErr_NoMemory();
+                    }
+                    runs = new_runs;
+                }
+                runs[run_count++] = run;
+                run = 1;
+                prev = cur;
+            }
+        }
+        if (run_count >= run_cap) {
+            int *new_runs;
+            run_cap *= 2;
+            new_runs = (int *)PyMem_Realloc(runs, sizeof(int) * (size_t)run_cap);
+            if (new_runs == NULL) {
+                PyMem_Free(runs);
+                PyBuffer_Release(&in_buf);
+                return PyErr_NoMemory();
+            }
+            runs = new_runs;
+        }
+        runs[run_count++] = run;
+    }
+
+    for (i = 0; i < 5; i++) {
+        int x = samples_x[i];
+        uint8_t prev = bits[top * width + x];
+        int run = 1;
+        for (int y = top + 1; y < bottom; y++) {
+            uint8_t cur = bits[y * width + x];
+            if (cur == prev) {
+                run++;
+            } else {
+                if (run_count >= run_cap) {
+                    int *new_runs;
+                    run_cap *= 2;
+                    new_runs = (int *)PyMem_Realloc(runs, sizeof(int) * (size_t)run_cap);
+                    if (new_runs == NULL) {
+                        PyMem_Free(runs);
+                        PyBuffer_Release(&in_buf);
+                        return PyErr_NoMemory();
+                    }
+                    runs = new_runs;
+                }
+                runs[run_count++] = run;
+                run = 1;
+                prev = cur;
+            }
+        }
+        if (run_count >= run_cap) {
+            int *new_runs;
+            run_cap *= 2;
+            new_runs = (int *)PyMem_Realloc(runs, sizeof(int) * (size_t)run_cap);
+            if (new_runs == NULL) {
+                PyMem_Free(runs);
+                PyBuffer_Release(&in_buf);
+                return PyErr_NoMemory();
+            }
+            runs = new_runs;
+        }
+        runs[run_count++] = run;
+    }
+
+    int filtered_count = 0;
+    for (i = 0; i < run_count; i++) if (runs[i] >= 2) runs[filtered_count++] = runs[i];
+    if (filtered_count == 0) {
+        for (i = 0; i < run_count; i++) if (runs[i] >= 1) runs[filtered_count++] = runs[i];
+    }
+
+    if (filtered_count > 0) {
+        for (i = 0; i < filtered_count - 1; i++) {
+            for (j = i + 1; j < filtered_count; j++) {
+                if (runs[i] > runs[j]) {
+                    int tmp = runs[i];
+                    runs[i] = runs[j];
+                    runs[j] = tmp;
+                }
+            }
+        }
+        int median_count = filtered_count / 2;
+        if (median_count == 0) median_count = 1;
+        int sum_lower = 0;
+        for (i = 0; i < median_count; i++) sum_lower += runs[i];
+        
+        // Use simpler median or average of lower half
+        if (median_count % 2 == 1) {
+            module_size = (double)runs[median_count / 2];
+        } else {
+            module_size = (double)(runs[median_count / 2 - 1] + runs[median_count / 2]) / 2.0;
+        }
+    }
+
+    PyMem_Free(runs);
+    PyBuffer_Release(&in_buf);
+
+    if (module_size < 1.0) {
+        Py_RETURN_NONE;
+    }
+    return PyFloat_FromDouble(module_size);
+}
+
 static PyMethodDef cimage_methods[] = {
     {"convert", cimage_convert, METH_VARARGS, "Convert image mode."},
     {"getbbox_nonwhite", cimage_getbbox_nonwhite, METH_VARARGS, "Get non-white bbox."},
@@ -1056,6 +1462,11 @@ static PyMethodDef cimage_methods[] = {
     {"decode_webp_lib", cimage_decode_webp_lib, METH_VARARGS, "Decode WEBP bytes via libwebp."},
     {"threshold_to_bits", cimage_threshold_to_bits, METH_VARARGS, "Threshold image to 0/1 bits."},
     {"sixel_encode_mono", cimage_sixel_encode_mono, METH_VARARGS, "Encode mono bits to sixel body."},
+    {"matrix_to_image", cimage_matrix_to_image, METH_VARARGS, "Matrix to image pixels."},
+    {"otsu_threshold", cimage_otsu_threshold, METH_VARARGS, "Otsu threshold calculation."},
+    {"find_black_bbox_bits", cimage_find_black_bbox_bits, METH_VARARGS, "Find black bbox in bits."},
+    {"sample_matrix_3x3", cimage_sample_matrix_3x3, METH_VARARGS, "Sample QR matrix with 3x3 voting."},
+    {"estimate_module_size", cimage_estimate_module_size, METH_VARARGS, "Estimate module size."},
     {NULL, NULL, 0, NULL},
 };
 

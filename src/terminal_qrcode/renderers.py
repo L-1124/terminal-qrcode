@@ -22,8 +22,8 @@ from terminal_qrcode.layout import (
     _threshold_to_bits,
     _to_luma_bits,
     _upscale_matrix_nn,
-    strict_restore_qr_matrix,
 )
+from terminal_qrcode.qr_restore import strict_restore_qr_matrix
 from terminal_qrcode.simple_image import SimpleImage
 
 logger = logging.getLogger(__name__)
@@ -100,73 +100,100 @@ class HalfBlockRenderer:
 
     def render(self, payload: list[list[bool]] | SimpleImage, config: RenderConfig) -> Generator[str, None, None]:
         """将矩阵或图像分块渲染为半块 Unicode 字符流."""
+        matrix, invert_for_render = self._normalize_to_matrix(payload, config)
+        yield from self._generate_characters(matrix, invert_for_render, config.ascii_only)
+
+    def _normalize_to_matrix(
+        self, payload: list[list[bool]] | SimpleImage, config: RenderConfig
+    ) -> tuple[list[list[bool]], bool]:
+        """将不同类型的输入归一化为 bool 矩阵, 并确定是否需要反色."""
         invert_for_render = bool(config.invert)
-        if isinstance(payload, SimpleImage):
-            strict_matrix = strict_restore_qr_matrix(payload.copy(), config)
-            if strict_matrix is not None:
-                if config.fit:
-                    border = 2
-                    plan = _build_fit_plan(config, len(strict_matrix), len(strict_matrix))
-                    # 严格路径用实际可用尺寸，避免 30% 预算把 QR 网格缩成非标准尺寸。
-                    effective_cols = plan.avail_cols
-                    if config.max_cols is not None:
-                        effective_cols = min(effective_cols, config.max_cols)
-                    if config.img_width is not None:
-                        effective_cols = min(effective_cols, config.img_width)
-                    effective_cols = max(1, effective_cols)
-                    # 放不下时先缩 border，保护 QR 模块网格完整性。
-                    while border > 0 and (len(strict_matrix) + 2 * border) > effective_cols:
-                        border -= 1
-                    base_w = len(strict_matrix) + 2 * border
-                    if base_w > effective_cols:
-                        matrix = _resize_matrix_to_cols(_pad_border(strict_matrix, border), effective_cols)
-                    else:
-                        scale, border = _choose_halfblock_scale(
-                            len(strict_matrix),
-                            border,
-                            effective_cols,
-                            plan.avail_rows,
-                            _HALFBLOCK_MAX_SCALE,
-                        )
-                        matrix = _upscale_matrix_nn(_pad_border(strict_matrix, border), scale)
-                else:
-                    target_cols = _resolve_target_cols(config)
-                    matrix = _resize_matrix_to_cols(strict_matrix, target_cols)
-                # 严格路径已应用显式/自动极性，渲染阶段不再二次反转。
-                invert_for_render = False
-                logger.debug("HalfBlock strict restore: restored QR matrix size=%s", len(matrix))
-            else:
-                img = payload.copy().convert("L")
 
-                bbox = img.getbbox_nonwhite()
-                if bbox:
-                    img = img.crop(bbox)
-
-                plan = _build_fit_plan(config, img.width, img.height)
-                img = _resize_image_to_cols(
-                    img,
-                    plan.display_cols,
-                    resample=SimpleImage.Resampling.NEAREST,
-                )
-                logger.debug("HalfBlock fallback: constraining image to target cols=%s", plan.display_cols)
-
-                bits, _threshold = _to_luma_bits(img, threshold=None)
-                matrix = []
-                for y in range(img.height):
-                    row_start = y * img.width
-                    row_end = row_start + img.width
-                    matrix.append([b == 1 for b in bits[row_start:row_end]])
-        else:
+        # 1. 如果已经是矩阵，直接处理并返回
+        if not isinstance(payload, SimpleImage):
             target_cols = _resolve_target_cols(config)
             matrix = _resize_matrix_to_cols([list(row) for row in payload], target_cols)
+            return matrix, invert_for_render
 
+        # 2. 如果是图像，尝试“严格二维码还原”路径
+        strict_matrix = strict_restore_qr_matrix(payload.copy(), config)
+        if strict_matrix is not None:
+            matrix = self._resize_strict_matrix(strict_matrix, config)
+            # 严格路径已应用显式/自动极性，渲染阶段不再二次反转
+            return matrix, False
+
+        # 3. 回退路径：普通图像灰度化与阈值处理
+        matrix = self._normalize_image_fallback(payload, config)
+        return matrix, invert_for_render
+
+    def _resize_strict_matrix(self, strict_matrix: list[list[bool]], config: RenderConfig) -> list[list[bool]]:
+        """实现严格模式下的尺寸适配逻辑."""
+        if not config.fit:
+            target_cols = _resolve_target_cols(config)
+            return _resize_matrix_to_cols(strict_matrix, target_cols)
+
+        border = 2
+        plan = _build_fit_plan(config, len(strict_matrix), len(strict_matrix))
+
+        # 严格路径用实际可用尺寸，避免 30% 预算把 QR 网格缩成非标准尺寸
+        effective_cols = plan.avail_cols
+        if config.max_cols is not None:
+            effective_cols = min(effective_cols, config.max_cols)
+        if config.img_width is not None:
+            effective_cols = min(effective_cols, config.img_width)
+        effective_cols = max(1, effective_cols)
+
+        # 放不下时先缩 border，保护 QR 模块网格完整性
+        while border > 0 and (len(strict_matrix) + 2 * border) > effective_cols:
+            border -= 1
+
+        base_w = len(strict_matrix) + 2 * border
+        if base_w > effective_cols:
+            return _resize_matrix_to_cols(_pad_border(strict_matrix, border), effective_cols)
+
+        scale, border = _choose_halfblock_scale(
+            len(strict_matrix),
+            border,
+            effective_cols,
+            plan.avail_rows,
+            _HALFBLOCK_MAX_SCALE,
+        )
+        return _upscale_matrix_nn(_pad_border(strict_matrix, border), scale)
+
+    def _normalize_image_fallback(self, payload: SimpleImage, config: RenderConfig) -> list[list[bool]]:
+        """实现普通图像的回退规约逻辑."""
+        img = payload.copy().convert("L")
+
+        bbox = img.getbbox_nonwhite()
+        if bbox:
+            img = img.crop(bbox)
+
+        plan = _build_fit_plan(config, img.width, img.height)
+        img = _resize_image_to_cols(
+            img,
+            plan.display_cols,
+        )
+        logger.debug("HalfBlock fallback: constraining image to target cols=%s", plan.display_cols)
+
+        bits, _threshold = _to_luma_bits(img, threshold=None)
+        matrix = []
+        for y in range(img.height):
+            row_start = y * img.width
+            row_end = row_start + img.width
+            matrix.append([b == 1 for b in bits[row_start:row_end]])
+        return matrix
+
+    def _generate_characters(
+        self, matrix: list[list[bool]], invert_for_render: bool, ascii_only: bool
+    ) -> Generator[str, None, None]:
+        """将 bool 矩阵转换为字符串流."""
         if len(matrix) % 2 != 0:
             matrix.append([False] * len(matrix[0]))
 
         lines_per_chunk = 50
         buffer_pool: list[str] = []
 
-        if config.ascii_only:
+        if ascii_only:
             char_black = "  " if invert_for_render else "██"
             char_white = "██" if invert_for_render else "  "
             for row in matrix:
@@ -219,10 +246,9 @@ class KittyRenderer:
         image = _resize_image_to_cols(
             image,
             pixel_cols,
-            resample=SimpleImage.Resampling.NEAREST,
             allow_upscale=True,
         )
-        image.thumbnail((800, 800), SimpleImage.Resampling.NEAREST)
+        image.thumbnail((800, 800))
         width, height = image.width, image.height
         display_cols = min(display_cols, width)
         logger.debug(
@@ -277,10 +303,9 @@ class ITerm2Renderer:
         image = _resize_image_to_cols(
             image,
             plan.display_cols,
-            resample=SimpleImage.Resampling.NEAREST,
             allow_upscale=True,
         )
-        image.thumbnail((800, 800), SimpleImage.Resampling.NEAREST)
+        image.thumbnail((800, 800))
         width_cells = min(plan.display_cols, image.width) if config.fit else "auto"
         logger.debug(
             "iTerm2 rendering image: target_size=%sx%s, fit=%s display_cols=%s",
@@ -314,10 +339,9 @@ class WezTermRenderer(ITerm2Renderer):
         image = _resize_image_to_cols(
             image,
             plan.display_cols,
-            resample=SimpleImage.Resampling.NEAREST,
             allow_upscale=True,
         )
-        image.thumbnail((1200, 1200), SimpleImage.Resampling.NEAREST)
+        image.thumbnail((1200, 1200))
         width_cells = min(plan.display_cols, image.width) if config.fit else "auto"
         logger.debug(
             "WezTerm rendering image: target_size=%sx%s, fit=%s display_cols=%s",
@@ -347,8 +371,8 @@ class SixelRenderer:
             image = payload.copy()
             plan = _build_fit_plan(config, image.width, image.height)
             target_w_px, target_h_px = _cells_to_pixels(plan.display_cols, plan.display_rows)
-            image = image.resize((target_w_px, target_h_px), resample=SimpleImage.Resampling.NEAREST)
-            image.thumbnail((800, 800), SimpleImage.Resampling.NEAREST)
+            image = image.resize((target_w_px, target_h_px))
+            image.thumbnail((800, 800))
             width, height = image.width, image.height
             bits = _threshold_to_bits(image, threshold=128)
             logger.debug("Sixel: using internal encoder, size=%sx%s", width, height)
@@ -356,7 +380,7 @@ class SixelRenderer:
             image = _matrix_to_image(payload, config.scale, "RGB").convert("L")
             plan = _build_fit_plan(config, image.width, image.height)
             target_w_px, target_h_px = _cells_to_pixels(plan.display_cols, plan.display_rows)
-            image = image.resize((target_w_px, target_h_px), resample=SimpleImage.Resampling.NEAREST)
+            image = image.resize((target_w_px, target_h_px))
             width, height = image.width, image.height
             bits = _threshold_to_bits(image, threshold=128)
             logger.debug("Sixel rendering (Matrix): %sx%s, scale=%s", width, height, config.scale)
