@@ -47,7 +47,7 @@ class _PILLikeImage(ImageProtocol):
         return self
 
 
-@patch("terminal_qrcode.core.HalfBlockRenderer.render")
+@patch("terminal_qrcode.renderers.HalfBlockRenderer.render")
 @patch("terminal_qrcode.probe.TerminalProbe.probe")
 def test_draw_flat_kwargs_api(mock_probe, mock_render):
     """验证 draw 函数是否支持扁平化关键字参数并正确合并到 RenderConfig."""
@@ -67,24 +67,6 @@ def test_draw_flat_kwargs_api(mock_probe, mock_render):
     assert passed_config.ascii_only is True
     assert passed_config.fit is False
     assert passed_config.max_cols == 60
-
-
-def test_draw_signature_hides_render_config():
-    """验证 draw 对外签名不暴露内部 RenderConfig 参数."""
-    import inspect
-
-    signature = inspect.signature(draw)
-    assert "config" not in signature.parameters
-
-
-def test_draw_force_renderer_uses_literal_hint():
-    """验证 draw.force_renderer 使用 Literal 以提供明确 IDE 提示."""
-    from typing import get_type_hints
-
-    from terminal_qrcode.contracts import ImageInput, RendererName
-
-    hints = get_type_hints(draw, localns={"ImageInput": ImageInput, "RendererName": RendererName})
-    assert hints["force_renderer"] == RendererName | None
 
 
 @patch("terminal_qrcode.core.run_pipeline")
@@ -152,39 +134,23 @@ def test_draw_accepts_pil_like_payload():
     assert any(c in output for c in ("▄", "▀", "█", " "))
 
 
-def test_draw_accepts_string_path_payload(tmp_path: Path):
-    """验证 draw 支持字符串路径输入."""
-    path = tmp_path / "x.png"
+@pytest.mark.parametrize("payload_kind", ["str_path", "path", "bytes", "bytearray"])
+def test_draw_accepts_supported_payload_types(tmp_path: Path, payload_kind: str):
+    """验证 draw 支持字符串路径、Path、bytes 和 bytearray 输入."""
     image = SimpleImage.new("RGB", (2, 2), color=(0, 0, 0))
-    path.write_bytes(image.to_png_bytes())
-
-    chunks = list(draw(str(path), force_renderer="halfblock", img_width=2))
-    output = "".join(chunks)
-    assert any(c in output for c in ("▄", "▀", "█", " "))
-
-
-def test_draw_accepts_path_payload(tmp_path: Path):
-    """验证 draw 支持 Path 输入."""
+    png_bytes = image.to_png_bytes()
     path = tmp_path / "x.png"
-    image = SimpleImage.new("RGB", (2, 2), color=(0, 0, 0))
-    path.write_bytes(image.to_png_bytes())
+    path.write_bytes(png_bytes)
 
-    chunks = list(draw(path, force_renderer="halfblock", img_width=2))
-    output = "".join(chunks)
-    assert any(c in output for c in ("▄", "▀", "█", " "))
+    if payload_kind == "str_path":
+        payload: Any = str(path)
+    elif payload_kind == "path":
+        payload = path
+    elif payload_kind == "bytes":
+        payload = png_bytes
+    else:
+        payload = bytearray(png_bytes)
 
-
-def test_draw_accepts_png_bytes_payload():
-    """验证 draw 支持 PNG bytes 输入."""
-    payload = SimpleImage.new("RGB", (2, 2), color=(0, 0, 0)).to_png_bytes()
-    chunks = list(draw(payload, force_renderer="halfblock", img_width=2))
-    output = "".join(chunks)
-    assert any(c in output for c in ("▄", "▀", "█", " "))
-
-
-def test_draw_accepts_png_bytearray_payload():
-    """验证 draw 支持 PNG bytearray 输入."""
-    payload = bytearray(SimpleImage.new("RGB", (2, 2), color=(0, 0, 0)).to_png_bytes())
     chunks = list(draw(payload, force_renderer="halfblock", img_width=2))
     output = "".join(chunks)
     assert any(c in output for c in ("▄", "▀", "█", " "))

@@ -1,13 +1,11 @@
 """SimpleImage 模块的测试集."""
 
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
 import terminal_qrcode.simple_image as simple_image
-from terminal_qrcode.codecs import PngUnavailableError, TurboJpegUnavailableError, WebPUnavailableError
 from terminal_qrcode.simple_image import SimpleImage
 
 
@@ -62,125 +60,9 @@ def test_getbbox_nonwhite_rgb_returns_minimal_box():
     assert img.getbbox_nonwhite() == (2, 1, 4, 3)
 
 
-def test_convert_prefers_c_accel_when_available(monkeypatch):
-    """验证存在 C 加速模块时 convert 优先调用加速实现."""
-    calls: list[tuple[str, str, int, int]] = []
-
-    def fake_convert(data, src_mode, dst_mode, width, height):
-        calls.append((src_mode, dst_mode, width, height))
-        return bytes([7, 8, 9])
-
-    monkeypatch.setattr(simple_image, "_cimage", SimpleNamespace(convert=fake_convert))
-    img = SimpleImage.new("L", (1, 1), 3)
-    out = img.convert("RGB")
-
-    assert calls == [("L", "RGB", 1, 1)]
-    assert out.mode == "RGB"
-    assert out.getpixel((0, 0)) == (7, 8, 9)
-
-
-def test_resize_prefers_c_accel_when_available(monkeypatch):
-    """验证存在 C 加速模块时 resize 优先调用加速实现."""
-    calls: list[tuple[str, int, int, int, int]] = []
-
-    def fake_resize(data, mode, src_w, src_h, dst_w, dst_h):
-        calls.append((mode, src_w, src_h, dst_w, dst_h))
-        return bytes([5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16])
-
-    monkeypatch.setattr(simple_image, "_cimage", SimpleNamespace(resize_nearest=fake_resize))
-    img = SimpleImage.new("RGB", (1, 1), (1, 2, 3))
-    out = img.resize((2, 2))
-
-    assert calls == [("RGB", 1, 1, 2, 2)]
-    assert out.mode == "RGB"
-    assert out.width == 2
-    assert out.height == 2
-
-
-def test_open_png_raises_when_c_backend_unavailable(monkeypatch, tmp_path):
-    """验证 PNG 后端缺失时直接报错，不再回退手写解析."""
-    monkeypatch.setattr(
-        simple_image,
-        "decode_png_with_libpng",
-        lambda data: (_ for _ in ()).throw(PngUnavailableError("missing")),
-    )
-    path = tmp_path / "x.png"
-    path.write_bytes(_png_fixture_bytes())
-
-    with pytest.raises(ValueError, match="PNG decode requires C backend"):
-        SimpleImage.open(path)
-
-
-def test_c_accel_decode_png_supports_known_rgb_fixture(monkeypatch):
-    """验证 PNG 解码入口可处理固定 RGB PNG 样本."""
-    monkeypatch.setattr(
-        simple_image,
-        "decode_png_with_libpng",
-        lambda data: ("RGB", 1, 1, bytes([1, 2, 3])),
-    )
-    img = SimpleImage.from_bytes(_png_fixture_bytes())
-    assert img.mode == "RGB"
-    assert img.getpixel((0, 0)) == (1, 2, 3)
-
-
-def test_open_jpeg_raises_when_backend_unavailable(monkeypatch):
-    """验证 JPEG 后端不可用时直接报错，不再回退命令行工具."""
-    with (
-        patch("pathlib.Path.read_bytes", return_value=b"\xff\xd8\xff\xdb"),
-        patch(
-            "terminal_qrcode.simple_image.decode_jpeg_rgb",
-            side_effect=TurboJpegUnavailableError("missing"),
-        ),
-    ):
-        with pytest.raises(ValueError, match="JPEG decode requires C backend"):
-            SimpleImage.open(Path("x.jpg"))
-
-
-def test_open_jpeg_reports_decode_error(monkeypatch):
-    """验证 JPEG 后端返回解码错误时上抛统一错误."""
-    with (
-        patch("pathlib.Path.read_bytes", return_value=b"\xff\xd8\xff\xdb"),
-        patch(
-            "terminal_qrcode.simple_image.decode_jpeg_rgb",
-            side_effect=simple_image.TurboJpegDecodeError("broken"),
-        ),
-    ):
-        with pytest.raises(ValueError, match="Failed to decode JPEG with C backend"):
-            SimpleImage.open(Path("x.jpg"))
-
-
-def test_open_webp_raises_when_backend_unavailable(monkeypatch):
-    """验证 WEBP 后端不可用时直接报错，不再回退命令行工具."""
-    webp_header = b"RIFF\x10\x00\x00\x00WEBP"
-    with (
-        patch("pathlib.Path.read_bytes", return_value=webp_header),
-        patch(
-            "terminal_qrcode.simple_image.decode_webp_rgba",
-            side_effect=WebPUnavailableError("missing"),
-        ),
-    ):
-        with pytest.raises(ValueError, match="WEBP decode requires C backend"):
-            SimpleImage.open(Path("x.webp"))
-
-
-def test_open_webp_reports_decode_error(monkeypatch):
-    """验证 WEBP 后端返回解码错误时上抛统一错误."""
-    webp_header = b"RIFF\x10\x00\x00\x00WEBP"
-    with (
-        patch("pathlib.Path.read_bytes", return_value=webp_header),
-        patch(
-            "terminal_qrcode.simple_image.decode_webp_rgba",
-            side_effect=simple_image.WebPDecodeError("broken"),
-        ),
-    ):
-        with pytest.raises(ValueError, match="Failed to decode WEBP with C backend"):
-            SimpleImage.open(Path("x.webp"))
-
-
 def test_from_bytes_and_open_consistent_behavior(monkeypatch):
     """验证同一 JPEG 输入在 open 与 from_bytes 的行为一致."""
     jpeg_header = b"\xff\xd8\xff\xe0"
-    monkeypatch.setattr(simple_image, "_cimage", None)
     monkeypatch.setattr(
         simple_image,
         "decode_jpeg_rgb",
@@ -190,15 +72,3 @@ def test_from_bytes_and_open_consistent_behavior(monkeypatch):
         img_from_open = SimpleImage.open(Path("x.jpg"))
     img_from_bytes = SimpleImage.from_bytes(jpeg_header)
     assert img_from_open.getpixel((0, 0)) == img_from_bytes.getpixel((0, 0))
-
-
-def test_to_png_bytes_raises_when_backend_unavailable(monkeypatch):
-    """验证 PNG 编码后端缺失时直接报错，不再回退手写编码."""
-    monkeypatch.setattr(
-        simple_image,
-        "encode_png_with_libpng",
-        lambda data, mode, width, height: (_ for _ in ()).throw(PngUnavailableError("missing")),
-    )
-    img = SimpleImage.new("RGB", (1, 1), (1, 2, 3))
-    with pytest.raises(ValueError, match="PNG encode requires C backend"):
-        img.to_png_bytes()

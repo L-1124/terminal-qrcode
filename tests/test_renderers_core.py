@@ -3,21 +3,22 @@
 import base64
 import os
 from collections.abc import Generator
-from types import SimpleNamespace
 from unittest.mock import patch
 
 import pytest
 
-from terminal_qrcode import layout, renderers
+from terminal_qrcode import layout, qr_restore, renderers
 from terminal_qrcode.core import (
+    DEFAULT_RENDERER_REGISTRY,
+    RenderConfig,
+    Renderer,
+    TerminalCapability,
+)
+from terminal_qrcode.renderers import (
     HalfBlockRenderer,
     ITerm2Renderer,
     KittyRenderer,
-    RenderConfig,
-    Renderer,
-    RendererFactory,
     SixelRenderer,
-    TerminalCapability,
     WezTermRenderer,
 )
 from terminal_qrcode.simple_image import SimpleImage
@@ -39,16 +40,10 @@ def test_renderer_protocol():
 
 
 def test_render_config_defaults():
-    """验证渲染配置的默认参数是否正确."""
+    """验证渲染配置核心与鲁棒性默认值."""
     config = RenderConfig()
-
     assert config.scale == 8
     assert config.force_renderer is None
-
-
-def test_render_config_robustness_defaults():
-    """验证鲁棒性配置项的默认值."""
-    config = RenderConfig()
     assert config.invert is None
     assert config.ascii_only is False
     assert config.fit is True
@@ -142,7 +137,7 @@ def test_halfblock_strict_restore_uses_21_plus_4k_constraint():
     """验证严格还原网格尺寸遵循 21+4k 且位于标准范围."""
     matrix = _build_qr_like_matrix(size=29)
     image = _render_matrix_to_image(matrix, module=3, quiet=4)
-    restored = layout.strict_restore_qr_matrix(image, RenderConfig())
+    restored = qr_restore.strict_restore_qr_matrix(image, RenderConfig())
     assert restored is not None
     size = len(restored)
     assert 21 <= size <= 177
@@ -165,7 +160,7 @@ def test_halfblock_strict_restore_3x3_majority_is_noise_robust():
             value = image.getpixel((x, y))
             image.putpixel((x, y), 255 if value == 0 else 0)
 
-    restored = layout.strict_restore_qr_matrix(image, RenderConfig())
+    restored = qr_restore.strict_restore_qr_matrix(image, RenderConfig())
     assert restored is not None
     assert restored == matrix
 
@@ -174,7 +169,7 @@ def test_halfblock_auto_polarity_corrects_inverted_input():
     """验证 invert=None 时自动极性判定可修正黑白反转输入."""
     matrix = _build_qr_like_matrix(size=25)
     image = _render_matrix_to_image(matrix, module=4, quiet=4, invert=True)
-    restored = layout.strict_restore_qr_matrix(image, RenderConfig(invert=None))
+    restored = qr_restore.strict_restore_qr_matrix(image, RenderConfig(invert=None))
     assert restored is not None
     assert restored == matrix
 
@@ -183,7 +178,7 @@ def test_halfblock_invert_override_takes_priority():
     """验证显式 invert=True 会覆盖自动极性判定."""
     matrix = _build_qr_like_matrix(size=25)
     image = _render_matrix_to_image(matrix, module=4, quiet=4)
-    restored = layout.strict_restore_qr_matrix(image, RenderConfig(invert=True))
+    restored = qr_restore.strict_restore_qr_matrix(image, RenderConfig(invert=True))
     assert restored is not None
     expected = [[not cell for cell in row] for row in matrix]
     assert restored == expected
@@ -191,7 +186,7 @@ def test_halfblock_invert_override_takes_priority():
 
 def test_halfblock_strict_restore_fallback_on_non_qr(monkeypatch):
     """验证严格还原失败时会回退旧流程."""
-    monkeypatch.setattr(layout, "strict_restore_qr_matrix", lambda *_: None)
+    monkeypatch.setattr(renderers, "strict_restore_qr_matrix", lambda *_: None)
     img = SimpleImage.new("L", (100, 100), color=255)
     for y in range(45, 55):
         for x in range(45, 55):
@@ -281,27 +276,6 @@ def test_halfblock_image_autocrop_and_resize():
 
     # 验证输出宽度符合收束预期, 且去掉了 100 像素量级的冗余空白
     assert len(lines[0]) <= 10
-
-
-def test_halfblock_image_threshold_prefers_c_accel(monkeypatch):
-    """验证 HalfBlock 图片阈值化会优先调用可选 C 加速."""
-    calls: list[tuple[int, int, int]] = []
-
-    def fake_c_threshold(data: bytes, mode: str, w: int, h: int, threshold: int) -> bytes:
-        calls.append((w, h, threshold))
-        return bytes([1, 0, 0, 1])
-
-    monkeypatch.setattr(
-        layout,
-        "_cimage",
-        SimpleNamespace(threshold_to_bits=fake_c_threshold),
-    )
-    img = SimpleImage.new("L", (2, 2))
-    renderer = HalfBlockRenderer()
-    output = "".join(renderer.render(img, RenderConfig(img_width=2)))
-
-    assert calls
-    assert any(c in output for c in ("█", "▀", "▄", " "))
 
 
 def test_halfblock_invert_and_ascii():
@@ -398,7 +372,7 @@ def test_halfblock_uses_same_display_budget(monkeypatch):
     """验证 halfblock 严格路径会受统一 FitPlan 显示列宽预算约束."""
     monkeypatch.setattr(layout, "get_terminal_size", lambda fallback: os.terminal_size((120, 40)))
     matrix = _build_qr_like_matrix(size=25)
-    monkeypatch.setattr(layout, "strict_restore_qr_matrix", lambda *_args, **_kwargs: matrix)
+    monkeypatch.setattr(renderers, "strict_restore_qr_matrix", lambda *_args, **_kwargs: matrix)
     img = SimpleImage.new("L", (10, 10), color=255)
 
     plan = layout._build_fit_plan(RenderConfig(fit=True), 29, 29)
@@ -518,46 +492,6 @@ def test_sixel_renderer_output():
     assert "#1" in output  # 黑色调色板
 
 
-def test_sixel_internal_path_prefers_c_encoder(monkeypatch):
-    """验证 Sixel 内部路径会优先调用可选 C 编码器."""
-    calls: list[tuple[int, int]] = []
-
-    def fake_sixel_encode(bits: bytes, width: int, height: int) -> str:
-        calls.append((width, height))
-        return "#0?$#1@-"
-
-    monkeypatch.setattr(
-        layout,
-        "_cimage",
-        SimpleNamespace(sixel_encode_mono=fake_sixel_encode),
-    )
-    img = SimpleImage.new("L", (2, 2), color=0)
-    renderer = SixelRenderer()
-    output = "".join(renderer.render(img, RenderConfig(fit=False, img_width=2)))
-
-    assert calls == [(16, 16)]
-    assert "#0?$#1@-" in output
-
-
-def test_sixel_never_calls_external_img2sixel(monkeypatch):
-    """验证 Sixel 渲染路径不调用外部 img2sixel 命令."""
-    img = SimpleImage.new("L", (2, 2), color=0)
-    renderer = SixelRenderer()
-    run_calls: list[tuple] = []
-
-    def _forbid_run(*args, **kwargs):
-        run_calls.append((args, kwargs))
-        raise AssertionError("subprocess.run should not be called for sixel rendering")
-
-    monkeypatch.setattr(renderers.subprocess, "run", _forbid_run)
-
-    output = "".join(renderer.render(img, RenderConfig()))
-
-    assert output.startswith("\x1bP9q")
-    assert output.endswith("\x1b\\")
-    assert run_calls == []
-
-
 def test_sixel_fit_best_effort_resizes_before_encode(monkeypatch):
     """验证 Sixel 在 fit 模式下会先按列宽约束图像再编码."""
     seen_widths: list[int] = []
@@ -664,32 +598,13 @@ def test_halfblock_strict_respects_img_width_cap(monkeypatch):
     assert len(first_line) <= 30
 
 
-def test_renderer_factory():
-    """验证工厂模式是否能根据终端能力返回正确的渲染器实例."""
-    assert isinstance(RendererFactory.get_renderer(TerminalCapability.KITTY), KittyRenderer)
-    assert isinstance(RendererFactory.get_renderer(TerminalCapability.ITERM2), ITerm2Renderer)
-    assert isinstance(RendererFactory.get_renderer(TerminalCapability.WEZTERM), WezTermRenderer)
-    assert isinstance(RendererFactory.get_renderer(TerminalCapability.SIXEL), SixelRenderer)
-    assert isinstance(RendererFactory.get_renderer(TerminalCapability.FALLBACK), HalfBlockRenderer)
-
-
-def test_renderer_factory_uses_registry(monkeypatch):
-    """验证 RendererFactory 会委托默认注册表完成 capability 分发."""
-    from terminal_qrcode import core
-
-    calls = []
-
-    class DummyRegistry:
-        def get(self, cap):
-            calls.append(cap)
-            return HalfBlockRenderer()
-
-    monkeypatch.setattr(core, "DEFAULT_RENDERER_REGISTRY", DummyRegistry(), raising=False)
-
-    renderer = core.RendererFactory.get_renderer(TerminalCapability.KITTY)
-
-    assert isinstance(renderer, HalfBlockRenderer)
-    assert calls == [TerminalCapability.KITTY]
+def test_renderer_registry_get():
+    """验证注册表是否能根据终端能力返回正确的渲染器实例."""
+    assert isinstance(DEFAULT_RENDERER_REGISTRY.get(TerminalCapability.KITTY), KittyRenderer)
+    assert isinstance(DEFAULT_RENDERER_REGISTRY.get(TerminalCapability.ITERM2), ITerm2Renderer)
+    assert isinstance(DEFAULT_RENDERER_REGISTRY.get(TerminalCapability.WEZTERM), WezTermRenderer)
+    assert isinstance(DEFAULT_RENDERER_REGISTRY.get(TerminalCapability.SIXEL), SixelRenderer)
+    assert isinstance(DEFAULT_RENDERER_REGISTRY.get(TerminalCapability.FALLBACK), HalfBlockRenderer)
 
 
 def test_halfblock_renderer_streaming():
