@@ -31,11 +31,9 @@ print()
 
 解码后端：
 
-- PNG: `_cimage + libpng`
-- JPEG: `_cimage + libjpeg-turbo`
-- WEBP: `_cimage + libwebp`
-
-不再包含 `cffi`、`djpeg/dwebp` 命令行回退和手写格式解析链路。
+- PNG: `libpng`
+- JPEG: `libjpeg-turbo`
+- WEBP: `libwebp`
 
 ## 💻 支持的终端渲染器
 
@@ -45,30 +43,18 @@ print()
 - `sixel`（DEC Sixel）
 - `halfblock`（Unicode 半块字符降级）
 
-自动探测失败时会回退到 `halfblock`。
-`--ascii-only` 可进一步降级为纯 ASCII 块字符。
-Sixel 渲染使用内置编码器，不依赖 libsixel 或 img2sixel。
-
-## 🔧 CLI（可选）
+## 🔧 CLI
 
 ```bash
 python -m terminal_qrcode <image_path> [options]
 ```
 
-常用参数：
-
-- `-r, --renderer {kitty,iterm2,wezterm,sixel,halfblock}`
-- `--fit / --no-fit`（默认 `--fit`）
-- `--max-cols <int>`（最大列宽上限）
-- `--img-width <int>`（`fit=True` 时作为上限之一；`fit=False` 时作为目标宽度）
-- `--invert`
-- `--ascii-only`
-- `--debug`
-
-## 🛠️ 本地开发依赖（Windows）
+## 🛠️ 本地开发
 
 ```bash
 uv sync
+
+# Windows
 uv run python tools/bootstrap_deps.py
 ```
 
