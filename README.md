@@ -53,9 +53,13 @@ python -m terminal_qrcode <image_path> [options]
 
 ```bash
 uv sync
+```
 
-# Windows
-uv run python tools/bootstrap_deps.py
+Windows
+
+```bash
+uv run --no-project python tools/bootstrap_deps.py
+uv sync
 ```
 
 ## 📄 License
