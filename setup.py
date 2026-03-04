@@ -103,7 +103,7 @@ def _platform_libraries() -> list[str]:
     """返回平台对应的链接库名列表."""
     if sys.platform == "win32":
         return ["turbojpeg", "libpng16", "libwebp", "zlib"]
-    return ["turbojpeg", "png16", "webp"]
+    return ["turbojpeg", "png", "webp"]
 
 
 def _windows_static_libraries() -> list[str]:
@@ -136,18 +136,10 @@ setup(
         Extension(
             "terminal_qrcode._cimage",
             ["src/terminal_qrcode/_cimage.c"],
-            libraries=(
-                []
-                if sys.platform == "linux"
-                else (_windows_static_libraries() if sys.platform == "win32" else _platform_libraries())
-            ),
+            libraries=(_windows_static_libraries() if sys.platform == "win32" else _platform_libraries()),
             include_dirs=_include_dirs,
             library_dirs=_library_dirs,
-            extra_link_args=(
-                ["-Wl,-Bstatic", "-lpng16", "-lturbojpeg", "-lwebp", "-lz", "-Wl,-Bdynamic"]
-                if sys.platform == "linux"
-                else []
-            ),
+            extra_link_args=[],
         ),
     ],
 )

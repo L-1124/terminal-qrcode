@@ -19,13 +19,32 @@ has_turbojpeg_header() {
   [ -f /usr/include/turbojpeg.h ] || [ -f /usr/local/include/turbojpeg.h ]
 }
 
+download_turbojpeg_source() {
+  local output="$1"
+  local url
+  local -a urls=(
+    "https://codeload.github.com/libjpeg-turbo/libjpeg-turbo/tar.gz/refs/tags/3.1.3"
+    "https://github.com/libjpeg-turbo/libjpeg-turbo/archive/refs/tags/3.1.3.tar.gz"
+  )
+
+  for url in "${urls[@]}"; do
+    echo "Downloading libjpeg-turbo source from: $url"
+    # curl 7.29（manylinux2014）不支持 retry-all-errors，这里用多次重试覆盖临时网络抖动。
+    if curl -fsSL --connect-timeout 20 --max-time 300 --retry 5 --retry-delay 2 -o "$output" "$url"; then
+      return 0
+    fi
+  done
+
+  echo "Failed to download libjpeg-turbo source tarball from all mirrors." >&2
+  return 1
+}
+
 build_turbojpeg_from_source() {
   local workdir cmake_bin
   workdir="$(mktemp -d)"
   cmake_bin="$(command -v cmake3 || command -v cmake)"
 
-  curl -fsSL -o "$workdir/libjpeg-turbo.tar.gz" \
-    "https://github.com/libjpeg-turbo/libjpeg-turbo/archive/refs/tags/3.1.3.tar.gz"
+  download_turbojpeg_source "$workdir/libjpeg-turbo.tar.gz"
   tar -xzf "$workdir/libjpeg-turbo.tar.gz" -C "$workdir"
 
   "$cmake_bin" \

@@ -11,22 +11,29 @@ permissions:
 
 jobs:
   build_wheels:
-    name: Build wheels (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
+    name: Build wheels (${{ matrix.runner }} / ${{ matrix.cibw_archs }})
+    runs-on: ${{ matrix.runner }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - os: ubuntu-latest
-            cibw-archs: "x86_64 aarch64"
-          - os: macos-15-intel
-            cibw-archs: "x86_64"
-          - os: macos-latest
-            cibw-archs: "arm64"
-          - os: windows-latest
-            cibw-archs: "AMD64"
+          - runner: ubuntu-latest
+            cibw_archs: "x86_64"
+            artifact_name: "linux-x86_64"
+          - runner: ubuntu-24.04-arm
+            cibw_archs: "aarch64"
+            artifact_name: "linux-aarch64"
+          - runner: macos-15-intel
+            cibw_archs: "x86_64"
+            artifact_name: "macos-x86_64"
+          - runner: macos-latest
+            cibw_archs: "arm64"
+            artifact_name: "macos-arm64"
+          - runner: windows-latest
+            cibw_archs: "AMD64"
+            artifact_name: "windows-amd64"
     env:
-      CIBW_ARCHS: ${{ matrix.cibw-archs }}
+      CIBW_ARCHS: ${{ matrix.cibw_archs }}
       CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=15.0
       CIBW_BEFORE_ALL_LINUX: bash .github/scripts/vendor-linux.sh
       CIBW_BEFORE_ALL_MACOS: bash .github/scripts/vendor-macos.sh
@@ -119,7 +126,7 @@ jobs:
       - name: Upload wheel artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: wheels-${{ matrix.os }}
+          name: wheels-${{ matrix.artifact_name }}
           path: dist/*.whl
           if-no-files-found: error
 

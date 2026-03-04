@@ -8,6 +8,7 @@
 #include <png.h>
 #include <turbojpeg.h>
 #include <webp/decode.h>
+#include <webp/types.h>
 
 static int
 channels_from_mode(const char *mode)
