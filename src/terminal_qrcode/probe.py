@@ -119,13 +119,22 @@ class TerminalProbe:
             return
 
         if termios is not None and tty is not None:
-            fd = sys.stdin.fileno()
-            old_settings = termios.tcgetattr(fd)
             try:
+                fd = sys.stdin.fileno()
+                old_settings = termios.tcgetattr(fd)
                 tty.setcbreak(fd)
+            except (TypeError, OSError) as exc:
+                logger.debug("raw_mode unavailable, fallback to no-op: %r", exc)
+                yield
+                return
+
+            try:
                 yield
             finally:
-                termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                try:
+                    termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
+                except (TypeError, OSError) as exc:
+                    logger.debug("raw_mode restore skipped due to tcsetattr failure: %r", exc)
             return
         yield
 

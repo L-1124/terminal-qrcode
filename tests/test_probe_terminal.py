@@ -272,3 +272,39 @@ def test_probe_wezterm_heuristic_disabled_in_tmux(mock_stdin, mock_stdout, mock_
     probe = TerminalProbe()
     assert probe.probe(timeout=0.05) == TerminalCapability.FALLBACK
     assert mock_retry.call_count >= 1
+
+
+@patch("terminal_qrcode.probe.sys.platform", "linux")
+@patch("terminal_qrcode.probe.tty")
+@patch("terminal_qrcode.probe.termios")
+@patch("sys.stdin")
+def test_raw_mode_noop_when_tcgetattr_fails(mock_stdin, mock_termios, mock_tty):
+    """验证 tcgetattr 抛错时 _raw_mode 会降级为 no-op."""
+    mock_stdin.isatty.return_value = True
+    mock_stdin.fileno.return_value = 0
+    mock_termios.error = OSError
+    mock_termios.tcgetattr.side_effect = OSError("ioctl failed")
+
+    probe = TerminalProbe()
+    with probe._raw_mode():
+        pass
+
+    mock_tty.setcbreak.assert_not_called()
+    mock_termios.tcsetattr.assert_not_called()
+
+
+@patch("terminal_qrcode.probe.sys.platform", "linux")
+@patch("terminal_qrcode.probe.tty")
+@patch("terminal_qrcode.probe.termios")
+@patch("sys.stdin")
+def test_raw_mode_noop_when_fileno_raises_type_error(mock_stdin, mock_termios, mock_tty):
+    """验证 fileno 抛 TypeError 时 _raw_mode 会降级为 no-op."""
+    mock_stdin.isatty.return_value = True
+    mock_stdin.fileno.side_effect = TypeError("bad fileno")
+
+    probe = TerminalProbe()
+    with probe._raw_mode():
+        pass
+
+    mock_termios.tcgetattr.assert_not_called()
+    mock_tty.setcbreak.assert_not_called()
