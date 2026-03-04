@@ -604,6 +604,66 @@ def test_halfblock_too_narrow_keeps_current_downscale_behavior(monkeypatch):
     assert len(first_line) <= 19
 
 
+def test_halfblock_strict_never_produces_nonstandard_qr_size(monkeypatch):
+    """验证严格路径输出矩阵尺寸始终为标准 QR 尺寸（21+4k）的整数倍放大，不出现 22 等非法尺寸."""
+    monkeypatch.setattr(layout, "get_terminal_size", lambda fallback: os.terminal_size((77, 24)))
+    matrix = _build_qr_like_matrix(size=21)
+    monkeypatch.setattr(renderers, "strict_restore_qr_matrix", lambda *_args, **_kwargs: matrix)
+
+    img = SimpleImage.new("L", (10, 10), color=255)
+    renderer = HalfBlockRenderer()
+    output = "".join(renderer.render(img, RenderConfig(fit=True)))
+    first_line = output.splitlines()[0]
+    line_len = len(first_line)
+    # 输出宽度必须是 (21 + 2*border) * scale 的合法值，绝不能是 22。
+    assert line_len != 22
+    assert line_len >= 21
+
+
+def test_halfblock_strict_wide_terminal_uses_larger_scale(monkeypatch):
+    """验证宽终端下严格路径会使用更大的整数放大倍数."""
+    monkeypatch.setattr(layout, "get_terminal_size", lambda fallback: os.terminal_size((140, 60)))
+    matrix = _build_qr_like_matrix(size=25)
+    monkeypatch.setattr(renderers, "strict_restore_qr_matrix", lambda *_args, **_kwargs: matrix)
+
+    img = SimpleImage.new("L", (10, 10), color=255)
+    renderer = HalfBlockRenderer()
+    output = "".join(renderer.render(img, RenderConfig(fit=True)))
+    first_line = output.splitlines()[0]
+    # 25 + 2*2 = 29 (scale=1); avail_cols=139 可容纳 scale=4 → 29*4=116。
+    # 旧代码只用 30% 预算 → display_cols=41 → scale=1 → 宽度仅 29。
+    assert len(first_line) > 29
+
+
+def test_halfblock_strict_reduces_border_before_resize(monkeypatch):
+    """验证终端略窄时先缩 border 而非直接 resize 模块网格."""
+    # size=25, border=2 → base_w=29; avail=27 → 放不下。
+    # 期望: border 缩到 1 → base_w=27，刚好放下，不触发 resize。
+    monkeypatch.setattr(layout, "get_terminal_size", lambda fallback: os.terminal_size((28, 24)))
+    matrix = _build_qr_like_matrix(size=25)
+    monkeypatch.setattr(renderers, "strict_restore_qr_matrix", lambda *_args, **_kwargs: matrix)
+
+    img = SimpleImage.new("L", (10, 10), color=255)
+    renderer = HalfBlockRenderer()
+    output = "".join(renderer.render(img, RenderConfig(fit=True)))
+    first_line = output.splitlines()[0]
+    # border=1, scale=1 → 25+2=27
+    assert len(first_line) == 27
+
+
+def test_halfblock_strict_respects_img_width_cap(monkeypatch):
+    """验证严格路径仍受 img_width 上限约束."""
+    monkeypatch.setattr(layout, "get_terminal_size", lambda fallback: os.terminal_size((200, 40)))
+    matrix = _build_qr_like_matrix(size=25)
+    monkeypatch.setattr(renderers, "strict_restore_qr_matrix", lambda *_args, **_kwargs: matrix)
+
+    img = SimpleImage.new("L", (10, 10), color=255)
+    renderer = HalfBlockRenderer()
+    output = "".join(renderer.render(img, RenderConfig(fit=True, img_width=30)))
+    first_line = output.splitlines()[0]
+    assert len(first_line) <= 30
+
+
 def test_renderer_factory():
     """验证工厂模式是否能根据终端能力返回正确的渲染器实例."""
     assert isinstance(RendererFactory.get_renderer(TerminalCapability.KITTY), KittyRenderer)

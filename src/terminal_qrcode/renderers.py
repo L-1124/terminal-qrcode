@@ -106,16 +106,26 @@ class HalfBlockRenderer:
             if strict_matrix is not None:
                 if config.fit:
                     border = 2
-                    base_w = len(strict_matrix[0]) + border * 2
-                    plan = _build_fit_plan(config, base_w, base_w)
-                    if base_w > plan.display_cols:
-                        matrix = _resize_matrix_to_cols(_pad_border(strict_matrix, border), plan.display_cols)
+                    plan = _build_fit_plan(config, len(strict_matrix), len(strict_matrix))
+                    # 严格路径用实际可用尺寸，避免 30% 预算把 QR 网格缩成非标准尺寸。
+                    effective_cols = plan.avail_cols
+                    if config.max_cols is not None:
+                        effective_cols = min(effective_cols, config.max_cols)
+                    if config.img_width is not None:
+                        effective_cols = min(effective_cols, config.img_width)
+                    effective_cols = max(1, effective_cols)
+                    # 放不下时先缩 border，保护 QR 模块网格完整性。
+                    while border > 0 and (len(strict_matrix) + 2 * border) > effective_cols:
+                        border -= 1
+                    base_w = len(strict_matrix) + 2 * border
+                    if base_w > effective_cols:
+                        matrix = _resize_matrix_to_cols(_pad_border(strict_matrix, border), effective_cols)
                     else:
                         scale, border = _choose_halfblock_scale(
                             len(strict_matrix),
                             border,
-                            plan.display_cols,
-                            plan.display_rows,
+                            effective_cols,
+                            plan.avail_rows,
                             _HALFBLOCK_MAX_SCALE,
                         )
                         matrix = _upscale_matrix_nn(_pad_border(strict_matrix, border), scale)
