@@ -123,7 +123,7 @@ class TerminalProbe:
                 fd = sys.stdin.fileno()
                 old_settings = termios.tcgetattr(fd)
                 tty.setcbreak(fd)
-            except (TypeError, OSError) as exc:
+            except Exception as exc:  # noqa: BLE001
                 logger.debug("raw_mode unavailable, fallback to no-op: %r", exc)
                 yield
                 return
@@ -133,7 +133,7 @@ class TerminalProbe:
             finally:
                 try:
                     termios.tcsetattr(fd, termios.TCSADRAIN, old_settings)
-                except (TypeError, OSError) as exc:
+                except Exception as exc:  # noqa: BLE001
                     logger.debug("raw_mode restore skipped due to tcsetattr failure: %r", exc)
             return
         yield
@@ -163,6 +163,18 @@ class TerminalProbe:
 
         start_time = time.monotonic()
         stdin = sys.stdin
+        fd: int | None = None
+
+        if sys.platform != "win32":
+            try:
+                stdin_fd = stdin.fileno()
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("query skipped due to invalid stdin fileno: %r", exc)
+                return ""
+            if not isinstance(stdin_fd, int):
+                logger.debug("query skipped due to non-integer stdin fileno: %r", stdin_fd)
+                return ""
+            fd = stdin_fd
 
         if sys.platform == "win32" and msvcrt is not None:
             res_bytes = bytearray()
@@ -196,7 +208,7 @@ class TerminalProbe:
                 break
 
             # select 此时使用动态收缩的剩余时间
-            rlist, _, _ = select.select([stdin], [], [], remaining)
+            rlist, _, _ = select.select([fd], [], [], remaining)
             if not rlist:
                 break
 
