@@ -1,8 +1,6 @@
 # terminal-qrcode
 
-[![Python 3.10+](https://img.shields.io/badge/python-3.10+-blue.svg)](https://www.python.org/downloads/)
-[![Ruff](https://img.shields.io/badge/lint-ruff-000000.svg)](https://github.com/astral-sh/ruff)
-[![Pytest](https://img.shields.io/badge/test-pytest-0A9EDC.svg)](https://docs.pytest.org/)
+[![Python 3.10+](https://img.shields.io/badge/Python-3.10|3.11|3.12|3.13|3.14-blue)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://opensource.org/licenses/MIT)
 
 终端二维码图片渲染工具，支持图形协议与字符降级渲染。
