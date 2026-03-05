@@ -2,10 +2,8 @@
 __pycache__/
 *.py[codz]
 *$py.class
-test.png
 # C extensions
 *.so
-qrcode/
 _vendor/
 
 # Distribution / packaging
