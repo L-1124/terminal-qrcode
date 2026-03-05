@@ -9,7 +9,9 @@ from collections.abc import Callable, Generator, Hashable
 from functools import lru_cache
 from typing import Generic, TypeVar
 
-from terminal_qrcode.contracts import RenderConfig, Renderer, TerminalCapability
+from colorama import Back, Fore, Style, just_fix_windows_console
+
+from terminal_qrcode.contracts import ColorLevelName, RenderConfig, Renderer, TerminalCapability
 from terminal_qrcode.layout import (
     _build_fit_plan,
     _cells_to_pixels,
@@ -31,6 +33,27 @@ logger = logging.getLogger(__name__)
 T = TypeVar("T")
 _HALFBLOCK_MAX_SCALE = 10
 _KITTY_SUPERSAMPLE = 3
+
+
+@lru_cache(maxsize=1)
+def _ensure_colorama_console() -> None:
+    """初始化 Windows ANSI 颜色支持（其它平台无副作用）."""
+    just_fix_windows_console()
+
+
+def _halfblock_sgr(color_level: ColorLevelName, fg_dark: bool, bg_dark: bool) -> str:
+    """根据颜色等级生成半块字符前景/背景 SGR 片段."""
+    if color_level == "ansi16":
+        fg = Fore.BLACK if fg_dark else Fore.WHITE
+        bg = Back.BLACK if bg_dark else Back.WHITE
+        return f"{fg}{bg}"
+    if color_level == "ansi256":
+        fg = "38;5;16" if fg_dark else "38;5;231"
+        bg = "48;5;16" if bg_dark else "48;5;231"
+        return f"\x1b[{fg};{bg}m"
+    fg = "38;2;0;0;0" if fg_dark else "38;2;255;255;255"
+    bg = "48;2;0;0;0" if bg_dark else "48;2;255;255;255"
+    return f"\x1b[{fg};{bg}m"
 
 
 @lru_cache(maxsize=1)
@@ -101,7 +124,7 @@ class HalfBlockRenderer:
     def render(self, payload: list[list[bool]] | SimpleImage, config: RenderConfig) -> Generator[str, None, None]:
         """将矩阵或图像分块渲染为半块 Unicode 字符流."""
         matrix, invert_for_render = self._normalize_to_matrix(payload, config)
-        yield from self._generate_characters(matrix, invert_for_render, config.ascii_only)
+        yield from self._generate_characters(matrix, invert_for_render, config.color_level)
 
     def _normalize_to_matrix(
         self, payload: list[list[bool]] | SimpleImage, config: RenderConfig
@@ -164,11 +187,6 @@ class HalfBlockRenderer:
         if base_w > effective_cols:
             return _resize_matrix_to_cols(base_matrix, effective_cols)
 
-        # 保持 ascii_only 原有逻辑，避免影响非半块字符模式下的既有输出。
-        if config.ascii_only:
-            scale = self._choose_scale_area_mode(base_w, base_h, effective_cols, plan.avail_rows)
-            return _upscale_matrix_nn(base_matrix, scale)
-
         if config.halfblock_mode == "precision":
             return base_matrix
 
@@ -216,7 +234,7 @@ class HalfBlockRenderer:
         return matrix
 
     def _generate_characters(
-        self, matrix: list[list[bool]], invert_for_render: bool, ascii_only: bool
+        self, matrix: list[list[bool]], invert_for_render: bool, color_level: ColorLevelName
     ) -> Generator[str, None, None]:
         """将 bool 矩阵转换为字符串流."""
         if len(matrix) % 2 != 0:
@@ -225,25 +243,16 @@ class HalfBlockRenderer:
         lines_per_chunk = 50
         buffer_pool: list[str] = []
 
-        if ascii_only:
-            char_black = "  " if invert_for_render else "██"
-            char_white = "██" if invert_for_render else "  "
-            for row in matrix:
-                line = "".join(char_black if cell else char_white for cell in row)
-                buffer_pool.append(line)
-                if len(buffer_pool) >= lines_per_chunk:
-                    yield "\n".join(buffer_pool) + "\n"
-                    buffer_pool.clear()
-        else:
-            for i in range(0, len(matrix), 2):
-                row_top = matrix[i]
-                row_bottom = matrix[i + 1]
+        for i in range(0, len(matrix), 2):
+            row_top = matrix[i]
+            row_bottom = matrix[i + 1]
 
-                line_chars = []
-                for top, bottom in zip(row_top, row_bottom, strict=False):
-                    if invert_for_render:
-                        top, bottom = not top, not bottom
+            line_chars = []
+            for top, bottom in zip(row_top, row_bottom, strict=False):
+                if invert_for_render:
+                    top, bottom = not top, not bottom
 
+                if color_level == "none":
                     if top and bottom:
                         line_chars.append("█")
                     elif top:
@@ -252,11 +261,18 @@ class HalfBlockRenderer:
                         line_chars.append("▄")
                     else:
                         line_chars.append(" ")
+                    continue
 
-                buffer_pool.append("".join(line_chars))
-                if len(buffer_pool) >= lines_per_chunk:
-                    yield "\n".join(buffer_pool) + "\n"
-                    buffer_pool.clear()
+                _ensure_colorama_console()
+                line_chars.append(f"{_halfblock_sgr(color_level, fg_dark=top, bg_dark=bottom)}▀")
+
+            line = "".join(line_chars)
+            if color_level != "none":
+                line = f"{line}{Style.RESET_ALL}"
+            buffer_pool.append(line)
+            if len(buffer_pool) >= lines_per_chunk:
+                yield "\n".join(buffer_pool) + "\n"
+                buffer_pool.clear()
 
         if buffer_pool:
             yield "\n".join(buffer_pool)

@@ -6,7 +6,9 @@ requires-python = ">=3.10"
 authors = [
   { name = "Luren", email = "68656403+luren-dc@users.noreply.github.com" }
 ]
-dependencies = []
+dependencies = [
+    "colorama>=0.4.6",
+]
 dynamic = ["version"]
 
 [project.optional-dependencies]

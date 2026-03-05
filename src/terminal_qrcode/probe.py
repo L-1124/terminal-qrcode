@@ -11,7 +11,7 @@ from collections.abc import Generator
 from dataclasses import dataclass
 from typing import Any
 
-from terminal_qrcode.core import TerminalCapability
+from terminal_qrcode.contracts import TerminalCapability, TerminalColorLevel
 
 logger = logging.getLogger(__name__)
 
@@ -45,10 +45,19 @@ class _ProbeCache:
     elapsed_ms: float
 
 
+@dataclass(frozen=True)
+class _ColorProbeCache:
+    key: tuple[object, ...]
+    level: TerminalColorLevel
+    probe_source: str
+    elapsed_ms: float
+
+
 class TerminalProbe:
     """终端能力探测器."""
 
     _cache: _ProbeCache | None = None
+    _color_cache: _ColorProbeCache | None = None
 
     @staticmethod
     def _parse_term_features(features: str) -> tuple[bool, bool]:
@@ -287,6 +296,117 @@ class TerminalProbe:
             sys.stdout.isatty(),
             sys.platform,
         )
+
+    @staticmethod
+    def _color_cache_key() -> tuple[object, ...]:
+        """构建文本颜色探测缓存 key."""
+        return (
+            os.environ.get("NO_COLOR", ""),
+            os.environ.get("FORCE_COLOR", ""),
+            os.environ.get("COLORTERM", ""),
+            os.environ.get("TERM", ""),
+            os.environ.get("WT_SESSION", ""),
+            os.environ.get("ANSICON", ""),
+            os.environ.get("ConEmuANSI", ""),
+            os.environ.get("TERM_PROGRAM", ""),
+            sys.stdout.isatty(),
+            sys.platform,
+        )
+
+    @staticmethod
+    def _parse_force_color(value: str) -> TerminalColorLevel | None:
+        """解析 FORCE_COLOR 语义."""
+        raw = value.strip()
+        if raw == "":
+            return TerminalColorLevel.ANSI16
+        if raw == "0":
+            return TerminalColorLevel.NONE
+        if raw == "1":
+            return TerminalColorLevel.ANSI16
+        if raw == "2":
+            return TerminalColorLevel.ANSI256
+        if raw == "3":
+            return TerminalColorLevel.TRUECOLOR
+        return TerminalColorLevel.ANSI16
+
+    @staticmethod
+    def _supports_windows_color_env() -> bool:
+        """判断 Windows 环境变量是否表明支持 ANSI 颜色."""
+        term_program = os.environ.get("TERM_PROGRAM", "").lower()
+        if os.environ.get("WT_SESSION", ""):
+            return True
+        if os.environ.get("ANSICON", ""):
+            return True
+        if os.environ.get("ConEmuANSI", "").upper() == "ON":
+            return True
+        return term_program == "vscode"
+
+    def probe_color(self, timeout: float = 0.05) -> TerminalColorLevel:
+        """
+        探测终端 ASCII 文本颜色能力等级.
+
+        Args:
+            timeout: 保留参数，当前实现仅做非交互探测.
+
+        Returns:
+            TerminalColorLevel: 文本颜色能力等级.
+
+        """
+        _ = timeout
+        key = self._color_cache_key()
+        cache = self._color_cache
+        if cache is not None and cache.key == key:
+            logger.debug(
+                "Selected color level via probe_source=cache cached_source=%s cached_elapsed_ms=%.2f",
+                cache.probe_source,
+                cache.elapsed_ms,
+            )
+            return cache.level
+
+        start = time.monotonic()
+
+        def _finalize(level: TerminalColorLevel, source: str) -> TerminalColorLevel:
+            elapsed_ms = (time.monotonic() - start) * 1000.0
+            self._color_cache = _ColorProbeCache(key, level, source, elapsed_ms)
+            logger.debug(
+                "Selected color level via probe_source=%s level=%s elapsed_ms=%.2f",
+                source,
+                level.name.lower(),
+                elapsed_ms,
+            )
+            return level
+
+        if os.environ.get("NO_COLOR", "").strip():
+            return _finalize(TerminalColorLevel.NONE, "no_color")
+
+        force_raw = os.environ.get("FORCE_COLOR")
+        if force_raw is not None:
+            level = self._parse_force_color(force_raw)
+            if level is not None:
+                return _finalize(level, "force_color")
+
+        term = os.environ.get("TERM", "").lower()
+        if term == "dumb":
+            return _finalize(TerminalColorLevel.NONE, "term_dumb")
+
+        if not sys.stdout.isatty():
+            return _finalize(TerminalColorLevel.NONE, "stdout_not_tty")
+
+        colorterm = os.environ.get("COLORTERM", "").lower()
+        if "truecolor" in colorterm or "24bit" in colorterm:
+            return _finalize(TerminalColorLevel.TRUECOLOR, "colorterm")
+
+        if "256color" in term:
+            return _finalize(TerminalColorLevel.ANSI256, "term_256color")
+
+        ansi16_prefixes = ("xterm", "screen", "tmux", "vt100", "linux", "ansi", "rxvt")
+        if term.startswith(ansi16_prefixes):
+            return _finalize(TerminalColorLevel.ANSI16, "term_prefix")
+
+        if sys.platform == "win32" and self._supports_windows_color_env():
+            return _finalize(TerminalColorLevel.ANSI16, "windows_env")
+
+        return _finalize(TerminalColorLevel.NONE, "fallback")
 
     def probe(self, timeout: float = 0.1) -> TerminalCapability:
         """

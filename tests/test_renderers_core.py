@@ -45,7 +45,6 @@ def test_render_config_defaults():
     assert config.scale == 8
     assert config.force_renderer is None
     assert config.invert is None
-    assert config.ascii_only is False
     assert config.fit is True
     assert config.max_cols is None
     assert config.img_width is None
@@ -110,7 +109,7 @@ def test_halfblock_strict_restore_respects_fit_cols():
     matrix = _build_qr_like_matrix(size=25)
     image = _render_matrix_to_image(matrix, module=4, quiet=4)
     renderer = HalfBlockRenderer()
-    output = "".join(renderer.render(image, RenderConfig(img_width=9, fit=True)))
+    output = "".join(renderer.render(image, RenderConfig(img_width=9, fit=True, color_level="none")))
     first_line = output.splitlines()[0]
     assert len(first_line) <= 9
 
@@ -120,7 +119,7 @@ def test_halfblock_fit_true_uses_terminal_columns(monkeypatch):
     monkeypatch.setattr(layout, "get_terminal_size", lambda fallback: os.terminal_size((12, 24)))
     img = SimpleImage.new("L", (64, 16), color=0)
     renderer = HalfBlockRenderer()
-    output = "".join(renderer.render(img, RenderConfig(img_width=120, fit=True)))
+    output = "".join(renderer.render(img, RenderConfig(img_width=120, fit=True, color_level="none")))
     first_line = output.splitlines()[0]
     assert len(first_line) <= 12
 
@@ -130,7 +129,7 @@ def test_halfblock_fit_respects_max_cols_and_img_width_cap(monkeypatch):
     monkeypatch.setattr(layout, "get_terminal_size", lambda fallback: os.terminal_size((100, 24)))
     img = SimpleImage.new("L", (120, 20), color=0)
     renderer = HalfBlockRenderer()
-    output = "".join(renderer.render(img, RenderConfig(fit=True, img_width=60, max_cols=30)))
+    output = "".join(renderer.render(img, RenderConfig(fit=True, img_width=60, max_cols=30, color_level="none")))
     first_line = output.splitlines()[0]
     assert len(first_line) <= 30
 
@@ -139,7 +138,7 @@ def test_halfblock_fit_false_uses_img_width_as_target():
     """验证 fit=False 时按 img_width 作为目标宽度收束."""
     img = SimpleImage.new("L", (80, 20), color=0)
     renderer = HalfBlockRenderer()
-    output = "".join(renderer.render(img, RenderConfig(fit=False, img_width=10)))
+    output = "".join(renderer.render(img, RenderConfig(fit=False, img_width=10, color_level="none")))
     first_line = output.splitlines()[0]
     assert len(first_line) <= 10
 
@@ -213,7 +212,7 @@ def test_halfblock_strict_restore_fallback_on_non_qr(monkeypatch):
             img.putpixel((x, y), 0)
 
     renderer = HalfBlockRenderer()
-    output = "".join(renderer.render(img, RenderConfig(img_width=8)))
+    output = "".join(renderer.render(img, RenderConfig(img_width=8, color_level="none")))
     first_line = output.splitlines()[0]
     assert len(first_line) <= 8
 
@@ -321,34 +320,47 @@ def test_halfblock_image_autocrop_and_resize():
             img.putpixel((x, y), 0)
 
     renderer = HalfBlockRenderer()
-    # 期望裁切掉白边后, 收束到宽度 10
-    config = RenderConfig(img_width=10)
-
-    output = "".join(renderer.render(img, config))
+    output = "".join(renderer.render(img, RenderConfig(img_width=10, color_level="none")))
     lines = output.strip().split("\n")
 
     # 验证输出宽度符合收束预期, 且去掉了 100 像素量级的冗余空白
     assert len(lines[0]) <= 10
 
 
-def test_halfblock_invert_and_ascii():
-    """验证反色与纯 ASCII 渲染模式的核心逻辑."""
+def test_halfblock_invert_behavior():
+    """验证反色模式下半块渲染的核心逻辑."""
     image = SimpleImage.new("L", (2, 2), 0)
     renderer = HalfBlockRenderer()
 
     # 1. 默认模式: 应该是半块字符中的全黑符号
-    out_default = "".join(renderer.render(image, RenderConfig(img_width=2)))
+    out_default = "".join(renderer.render(image, RenderConfig(img_width=2, color_level="none")))
     assert "█" in out_default
 
     # 2. 反色模式: 全黑应变成全亮(即背景色，一般为空格)
-    out_invert = "".join(renderer.render(image, RenderConfig(img_width=2, invert=True)))
+    out_invert = "".join(renderer.render(image, RenderConfig(img_width=2, invert=True, color_level="none")))
     assert "█" not in out_invert
     assert " " in out_invert
 
-    # 3. ASCII 降级模式: 无垂直压缩, 且不应含半块字符
-    out_ascii = "".join(renderer.render(image, RenderConfig(img_width=2, ascii_only=True)))
-    assert "▀" not in out_ascii
-    assert "▄" not in out_ascii
+def test_halfblock_color_level_none_keeps_plain_halfblocks():
+    """验证 color_level=none 时输出不包含 ANSI 颜色序列."""
+    matrix = [[True, False, True], [False, True, False]]
+    renderer = HalfBlockRenderer()
+
+    output = "".join(renderer.render(matrix, RenderConfig(fit=False, img_width=10, color_level="none")))
+    assert "\x1b[" not in output
+    assert any(c in output for c in ("█", "▀", "▄", " "))
+
+
+def test_halfblock_color_level_ansi16_contains_sgr_sequences():
+    """验证 halfblock 在 ansi16 等级下会输出 ANSI SGR 颜色序列."""
+    matrix = [[True, False], [False, True]]
+    renderer = HalfBlockRenderer()
+
+    output = "".join(renderer.render(matrix, RenderConfig(fit=False, img_width=10, color_level="ansi16")))
+
+    assert "\x1b[" in output
+    assert "▀" in output
+    assert "\x1b[0m" in output
 
 
 def test_kitty_renderer_output():
@@ -429,7 +441,7 @@ def test_halfblock_uses_same_display_budget(monkeypatch):
     img = _strict_candidate_image()
 
     plan = layout._build_fit_plan(RenderConfig(fit=True), 29, 29)
-    out = "".join(HalfBlockRenderer().render(img, RenderConfig(fit=True)))
+    out = "".join(HalfBlockRenderer().render(img, RenderConfig(fit=True, color_level="none")))
     first_line = out.splitlines()[0]
     assert len(first_line) <= plan.display_cols
 
@@ -558,7 +570,7 @@ def test_sixel_fit_best_effort_resizes_before_encode(monkeypatch):
 
     img = SimpleImage.new("L", (120, 20), color=0)
     renderer = SixelRenderer()
-    output = "".join(renderer.render(img, RenderConfig(fit=True)))
+    output = "".join(renderer.render(img, RenderConfig(fit=True, color_level="none")))
 
     assert output.startswith("\x1bP9q")
     assert output.endswith("\x1b\\")
@@ -573,7 +585,7 @@ def test_halfblock_strict_uses_integer_scale(monkeypatch):
 
     img = _strict_candidate_image()
     renderer = HalfBlockRenderer()
-    output = "".join(renderer.render(img, RenderConfig(fit=True)))
+    output = "".join(renderer.render(img, RenderConfig(fit=True, color_level="none")))
     first_line = output.splitlines()[0]
     assert len(first_line) == 29
 
@@ -586,7 +598,7 @@ def test_halfblock_too_narrow_keeps_current_downscale_behavior(monkeypatch):
 
     img = _strict_candidate_image()
     renderer = HalfBlockRenderer()
-    output = "".join(renderer.render(img, RenderConfig(fit=True)))
+    output = "".join(renderer.render(img, RenderConfig(fit=True, color_level="none")))
     first_line = output.splitlines()[0]
     assert len(first_line) <= 19
 
@@ -615,7 +627,7 @@ def test_halfblock_strict_precision_mode_keeps_native_scale(monkeypatch):
 
     img = _strict_candidate_image()
     renderer = HalfBlockRenderer()
-    output = "".join(renderer.render(img, RenderConfig(fit=True, halfblock_mode="precision")))
+    output = "".join(renderer.render(img, RenderConfig(fit=True, halfblock_mode="precision", color_level="none")))
     first_line = output.splitlines()[0]
     assert len(first_line) == 29
 
@@ -628,7 +640,7 @@ def test_halfblock_strict_area_mode_upscales_with_even_scale(monkeypatch):
 
     img = _strict_candidate_image()
     renderer = HalfBlockRenderer()
-    output = "".join(renderer.render(img, RenderConfig(fit=True, halfblock_mode="area")))
+    output = "".join(renderer.render(img, RenderConfig(fit=True, halfblock_mode="area", color_level="none")))
     first_line = output.splitlines()[0]
     # base=29，最大可用偶数 scale=4 -> 29*4=116。
     assert len(first_line) == 116
@@ -642,7 +654,7 @@ def test_halfblock_strict_area_mode_quantizes_odd_scale_to_even(monkeypatch):
 
     img = _strict_candidate_image()
     renderer = HalfBlockRenderer()
-    output = "".join(renderer.render(img, RenderConfig(fit=True, halfblock_mode="area")))
+    output = "".join(renderer.render(img, RenderConfig(fit=True, halfblock_mode="area", color_level="none")))
     first_line = output.splitlines()[0]
     # avail_cols=87，base=29，候选 scale=3，会量化为 2 -> 58。
     assert len(first_line) == 58
@@ -671,7 +683,7 @@ def test_halfblock_strict_reduces_border_before_resize(monkeypatch):
 
     img = _strict_candidate_image()
     renderer = HalfBlockRenderer()
-    output = "".join(renderer.render(img, RenderConfig(fit=True)))
+    output = "".join(renderer.render(img, RenderConfig(fit=True, color_level="none")))
     first_line = output.splitlines()[0]
     # border=1, scale=1 → 25+2=27
     assert len(first_line) == 27
@@ -685,7 +697,7 @@ def test_halfblock_strict_respects_img_width_cap(monkeypatch):
 
     img = SimpleImage.new("L", (10, 10), color=255)
     renderer = HalfBlockRenderer()
-    output = "".join(renderer.render(img, RenderConfig(fit=True, img_width=30)))
+    output = "".join(renderer.render(img, RenderConfig(fit=True, img_width=30, color_level="none")))
     first_line = output.splitlines()[0]
     assert len(first_line) <= 30
 
@@ -705,7 +717,7 @@ def test_halfblock_renderer_streaming():
 
     renderer = HalfBlockRenderer()
     image = SimpleImage.new("L", (2, 3), 0)
-    config = RenderConfig(ascii_only=False, invert=False, img_width=2)
+    config = RenderConfig(invert=False, img_width=2)
 
     result = renderer.render(image, config)
 

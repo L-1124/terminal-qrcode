@@ -9,6 +9,7 @@ from terminal_qrcode.simple_image import SimpleImage
 
 RendererName = Literal["kitty", "iterm2", "wezterm", "sixel", "halfblock"]
 HalfBlockMode = Literal["precision", "area"]
+ColorLevelName = Literal["auto", "none", "ansi16", "ansi256", "truecolor"]
 
 
 @dataclass(frozen=True)
@@ -19,7 +20,7 @@ class RenderConfig:
     force_renderer: RendererName | None = None
     timeout: float = 0.1
     invert: bool | None = None
-    ascii_only: bool = False
+    color_level: ColorLevelName = "auto"
     fit: bool = True
     max_cols: int | None = None
     img_width: int | None = None
@@ -35,6 +36,15 @@ class TerminalCapability(Enum):
     WEZTERM = auto()
     SIXEL = auto()
     FALLBACK = auto()
+
+
+class TerminalColorLevel(Enum):
+    """终端文本颜色能力枚举."""
+
+    NONE = auto()
+    ANSI16 = auto()
+    ANSI256 = auto()
+    TRUECOLOR = auto()
 
 
 @runtime_checkable

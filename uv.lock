@@ -299,6 +299,9 @@ wheels = [
 [[package]]
 name = "terminal-qrcode"
 source = { editable = "." }
+dependencies = [
+    { name = "colorama" },
+]
 
 [package.optional-dependencies]
 pyzarb = [
@@ -335,6 +338,7 @@ test = [
 
 [package.metadata]
 requires-dist = [
+    { name = "colorama", specifier = ">=0.4.6" },
     { name = "pyzbar", marker = "extra == 'pyzarb'", specifier = ">=0.1.9" },
     { name = "qrcode", marker = "extra == 'pyzarb'", specifier = ">=8.2" },
     { name = "qrcode", marker = "extra == 'qr'", specifier = ">=8.2" },

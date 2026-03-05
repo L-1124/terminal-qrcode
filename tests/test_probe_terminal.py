@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pytest
 
 from terminal_qrcode import draw
-from terminal_qrcode.contracts import TerminalCapability
+from terminal_qrcode.contracts import TerminalCapability, TerminalColorLevel
 from terminal_qrcode.probe import TerminalProbe
 from terminal_qrcode.simple_image import SimpleImage
 
@@ -23,6 +23,79 @@ def _mock_terminal_size(monkeypatch):
 def _clear_probe_cache():
     """每个测试前清理 probe 缓存，避免跨用例污染."""
     TerminalProbe._cache = None
+    TerminalProbe._color_cache = None
+
+
+@patch.dict("os.environ", {"NO_COLOR": "1"}, clear=True)
+@patch("sys.stdout")
+def test_probe_color_respects_no_color(mock_stdout):
+    """验证 NO_COLOR 会强制关闭文本颜色输出."""
+    mock_stdout.isatty.return_value = True
+    probe = TerminalProbe()
+    assert probe.probe_color() == TerminalColorLevel.NONE
+
+
+@patch.dict("os.environ", {"FORCE_COLOR": "3"}, clear=True)
+@patch("sys.stdout")
+def test_probe_color_force_truecolor(mock_stdout):
+    """验证 FORCE_COLOR=3 会强制 truecolor 等级."""
+    mock_stdout.isatty.return_value = True
+    probe = TerminalProbe()
+    assert probe.probe_color() == TerminalColorLevel.TRUECOLOR
+
+
+@patch.dict("os.environ", {"COLORTERM": "truecolor"}, clear=True)
+@patch("sys.stdout")
+def test_probe_color_colorterm_truecolor(mock_stdout):
+    """验证 COLORTERM=truecolor 会判定为 truecolor."""
+    mock_stdout.isatty.return_value = True
+    probe = TerminalProbe()
+    assert probe.probe_color() == TerminalColorLevel.TRUECOLOR
+
+
+@patch.dict("os.environ", {"TERM": "xterm-256color"}, clear=True)
+@patch("sys.stdout")
+def test_probe_color_term_256(mock_stdout):
+    """验证 TERM 含 256color 时判定为 ansi256."""
+    mock_stdout.isatty.return_value = True
+    probe = TerminalProbe()
+    assert probe.probe_color() == TerminalColorLevel.ANSI256
+
+
+@patch.dict("os.environ", {"TERM": "screen"}, clear=True)
+@patch("sys.stdout")
+def test_probe_color_term_prefix_ansi16(mock_stdout):
+    """验证常见 TERM 前缀可判定为 ansi16."""
+    mock_stdout.isatty.return_value = True
+    probe = TerminalProbe()
+    assert probe.probe_color() == TerminalColorLevel.ANSI16
+
+
+@patch.dict("os.environ", {"TERM": "dumb"}, clear=True)
+@patch("sys.stdout")
+def test_probe_color_term_dumb(mock_stdout):
+    """验证 TERM=dumb 会回退为无颜色等级."""
+    mock_stdout.isatty.return_value = True
+    probe = TerminalProbe()
+    assert probe.probe_color() == TerminalColorLevel.NONE
+
+
+@patch("sys.stdout")
+def test_probe_color_requires_stdout_tty(mock_stdout):
+    """验证非 TTY 输出时文本颜色探测回退为 NONE."""
+    mock_stdout.isatty.return_value = False
+    probe = TerminalProbe()
+    assert probe.probe_color() == TerminalColorLevel.NONE
+
+
+@patch.dict("os.environ", {"TERM": "xterm-256color"}, clear=True)
+@patch("sys.stdout")
+def test_probe_color_cached_after_first_call(mock_stdout):
+    """验证颜色探测会命中缓存避免重复判定."""
+    mock_stdout.isatty.return_value = True
+    probe = TerminalProbe()
+    assert probe.probe_color() == TerminalColorLevel.ANSI256
+    assert probe.probe_color() == TerminalColorLevel.ANSI256
 
 
 @patch("sys.stdout")

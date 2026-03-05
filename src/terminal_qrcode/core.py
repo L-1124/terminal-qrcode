@@ -6,11 +6,13 @@ from collections.abc import Generator
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
 from terminal_qrcode.contracts import (
+    ColorLevelName,
     ImageInput,
     ImageProtocol,
     RenderConfig,
     Renderer,
     TerminalCapability,
+    TerminalColorLevel,
 )
 from terminal_qrcode.renderers import (
     RendererRegistry,
@@ -59,12 +61,33 @@ def _resolve_capability(config: RenderConfig) -> TerminalCapability:
     return probe.probe(timeout=config.timeout)
 
 
+def _resolve_color_level(config: RenderConfig) -> ColorLevelName:
+    """解析最终文本颜色等级（auto 时走终端探测）."""
+    if config.color_level != "auto":
+        return config.color_level
+
+    # 延迟导入，避免与 probe.py 形成模块初始化循环。
+    from terminal_qrcode.probe import TerminalProbe
+
+    probe = TerminalProbe()
+    level = probe.probe_color(timeout=config.timeout)
+    if level is TerminalColorLevel.TRUECOLOR:
+        return "truecolor"
+    if level is TerminalColorLevel.ANSI256:
+        return "ansi256"
+    if level is TerminalColorLevel.ANSI16:
+        return "ansi16"
+    return "none"
+
+
 def _validate_config(config: RenderConfig) -> None:
     """验证关键渲染配置的合法性."""
     if config.img_width is not None and config.img_width <= 0:
         raise ValueError("img_width must be greater than 0.")
     if config.max_cols is not None and config.max_cols <= 0:
         raise ValueError("max_cols must be greater than 0 when provided.")
+    if config.color_level not in {"auto", "none", "ansi16", "ansi256", "truecolor"}:
+        raise ValueError("color_level must be one of: auto, none, ansi16, ansi256, truecolor.")
 
 
 def _to_simple_image(payload: ImageInput) -> SimpleImage:
@@ -105,6 +128,8 @@ def run_pipeline(
     """执行从输入到渲染输出的完整编排流程."""
     final_config = _merge_config(config, overrides or {})
     _validate_config(final_config)
+    final_color_level = _resolve_color_level(final_config)
+    final_config = dataclasses.replace(final_config, color_level=final_color_level)
     render_payload = _to_simple_image(payload)
     capability = _resolve_capability(final_config)
     logger.debug("Selected capability: %s", capability.name)
