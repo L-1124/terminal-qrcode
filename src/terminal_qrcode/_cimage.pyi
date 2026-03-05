@@ -79,6 +79,11 @@ def matrix_to_image(
 ) -> bytes:
     """将 bool 矩阵栅格化为像素字节."""
 
+def qr_matrix_to_luma(
+    matrix: list[list[bool]],
+) -> tuple[int, int, bytes]:
+    """将 QR 布尔矩阵转换为 L 模式像素字节（黑=0，白=255）."""
+
 def otsu_threshold(
     data: bytes,
 ) -> int:

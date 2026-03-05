@@ -2,12 +2,14 @@
 
 import os
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
 import pytest
 
-from terminal_qrcode import draw, layout
+import terminal_qrcode
+from terminal_qrcode import DrawOutput, draw, generate, layout
 from terminal_qrcode.contracts import ImageProtocol
 from terminal_qrcode.core import TerminalCapability
 from terminal_qrcode.simple_image import SimpleImage
@@ -196,3 +198,117 @@ def test_draw_fit_false_no_img_width_uses_internal_default():
     chunks = list(draw(image, force_renderer="halfblock", fit=False))
     first_line = "".join(chunks).splitlines()[0]
     assert len(first_line) <= 40
+
+
+@patch("terminal_qrcode.core.run_pipeline")
+def test_generate_returns_draw_output(mock_run_pipeline, monkeypatch):
+    """验证 generate 返回 DrawOutput 并委托到渲染管线."""
+
+    class _FakeQRCode:
+        def __init__(self, **_kwargs):
+            pass
+
+        def add_data(self, _data: str) -> None:
+            pass
+
+        def make(self, fit: bool = True) -> None:
+            _ = fit
+
+        def get_matrix(self) -> list[list[bool]]:
+            return [[True, False], [False, True]]
+
+    def _gen():
+        yield "q"
+        yield "r"
+
+    mock_run_pipeline.return_value = _gen()
+    fake_qrcode = SimpleNamespace(
+        QRCode=_FakeQRCode,
+        constants=SimpleNamespace(
+            ERROR_CORRECT_L=1,
+            ERROR_CORRECT_M=2,
+            ERROR_CORRECT_Q=3,
+            ERROR_CORRECT_H=4,
+        ),
+    )
+    monkeypatch.setattr(terminal_qrcode, "qrcode", fake_qrcode)
+
+    result = generate("hello", force_renderer="halfblock", img_width=2)
+    assert isinstance(result, DrawOutput)
+    assert str(result) == "qr"
+
+    args, kwargs = mock_run_pipeline.call_args
+    payload = args[0]
+    assert isinstance(payload, SimpleImage)
+    assert payload.mode == "L"
+    assert payload.width == 2
+    assert payload.height == 2
+    assert kwargs["overrides"]["force_renderer"] == "halfblock"
+    assert kwargs["overrides"]["img_width"] == 2
+
+
+def test_generate_rejects_invalid_ec_level(monkeypatch):
+    """验证 generate 对非法 ec_level 抛出 ValueError."""
+
+    class _FakeQRCode:
+        def __init__(self, **_kwargs):
+            pass
+
+        def add_data(self, _data: str) -> None:
+            pass
+
+        def make(self, fit: bool = True) -> None:
+            _ = fit
+
+        def get_matrix(self) -> list[list[bool]]:
+            return [[True]]
+
+    fake_qrcode = SimpleNamespace(
+        QRCode=_FakeQRCode,
+        constants=SimpleNamespace(
+            ERROR_CORRECT_L=1,
+            ERROR_CORRECT_M=2,
+            ERROR_CORRECT_Q=3,
+            ERROR_CORRECT_H=4,
+        ),
+    )
+    monkeypatch.setattr(terminal_qrcode, "qrcode", fake_qrcode)
+    with pytest.raises(ValueError, match="ec_level"):
+        generate("hello", ec_level="X")
+
+
+def test_generate_requires_qrcode_dependency(monkeypatch):
+    """验证 generate 在缺失 qrcode 依赖时抛出 RuntimeError."""
+    monkeypatch.setattr(terminal_qrcode, "qrcode", None)
+    with pytest.raises(RuntimeError, match="qrcode dependency is required"):
+        generate("hello")
+
+
+def test_generate_rejects_inconsistent_matrix_width(monkeypatch):
+    """验证 generate 对行宽不一致矩阵抛出 ValueError."""
+
+    class _FakeQRCode:
+        def __init__(self, **_kwargs):
+            pass
+
+        def add_data(self, _data: str) -> None:
+            pass
+
+        def make(self, fit: bool = True) -> None:
+            _ = fit
+
+        def get_matrix(self) -> list[list[bool]]:
+            return [[True, False], [True]]
+
+    fake_qrcode = SimpleNamespace(
+        QRCode=_FakeQRCode,
+        constants=SimpleNamespace(
+            ERROR_CORRECT_L=1,
+            ERROR_CORRECT_M=2,
+            ERROR_CORRECT_Q=3,
+            ERROR_CORRECT_H=4,
+        ),
+    )
+    monkeypatch.setattr(terminal_qrcode, "qrcode", fake_qrcode)
+    with pytest.raises(ValueError, match="inconsistent width"):
+        generate("hello")

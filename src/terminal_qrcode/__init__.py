@@ -1,76 +1,31 @@
 """终端二维码渲染库."""
 
-import ctypes
 import logging
-import os
-import sys
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any, overload
+
+from terminal_qrcode import core
+from terminal_qrcode.contracts import ImageInput, RendererName
+from terminal_qrcode.simple_image import SimpleImage
+
+try:
+    import qrcode as _qrcode
+except ImportError:
+    _qrcode = None
+
+qrcode: Any | None = _qrcode
 
 logger = logging.getLogger(__name__)
 
 __version__ = "0.1.0"
 
 
-_WINDOWS_DLL_DIR_HANDLE: Any | None = None
-_WINDOWS_DLL_PREPARED = False
-
-
-def _prepare_windows_runtime_dlls() -> None:
-    """准备 Windows 运行时 DLL 搜索路径与预加载."""
-    global _WINDOWS_DLL_DIR_HANDLE
-    global _WINDOWS_DLL_PREPARED
-
-    if _WINDOWS_DLL_PREPARED or sys.platform != "win32":
-        return
-    _WINDOWS_DLL_PREPARED = True
-
-    vendor_dir = Path(__file__).resolve().parent / "_vendor" / "windows"
-    if not vendor_dir.exists():
-        logger.debug("Windows vendor dir not found: %s", vendor_dir)
-        return
-
-    try:
-        add_dll_directory = getattr(os, "add_dll_directory", None)
-        if add_dll_directory is not None:
-            _WINDOWS_DLL_DIR_HANDLE = add_dll_directory(str(vendor_dir))
-    except OSError as exc:
-        logger.debug("add_dll_directory failed: %r", exc)
-
-    os.environ["PATH"] = f"{vendor_dir}{os.pathsep}{os.environ.get('PATH', '')}"
-
-    preload_candidates = [
-        "jpeg62.dll",
-        "zlib1.dll",
-        "turbojpeg.dll",
-        "libpng16.dll",
-        "libpng16-16.dll",
-        "libsharpyuv.dll",
-        "libwebp.dll",
-    ]
-    for dll_name in preload_candidates:
-        dll_path = vendor_dir / dll_name
-        if not dll_path.exists():
-            continue
-        try:
-            windll_loader = getattr(ctypes, "WinDLL", None)
-            if windll_loader is not None:
-                windll_loader(str(dll_path))
-        except OSError as exc:
-            logger.debug("Preload DLL failed: %s err=%r", dll_path, exc)
-
-
-_prepare_windows_runtime_dlls()
-
-from terminal_qrcode import core  # noqa: E402
-from terminal_qrcode.contracts import ImageInput, RendererName  # noqa: E402
-from terminal_qrcode.simple_image import SimpleImage  # noqa: E402
-
 __all__ = [
     "SimpleImage",
     "DrawOutput",
     "draw",
+    "generate",
 ]
 
 
@@ -220,6 +175,89 @@ def draw(
         payload = SimpleImage.open(payload)
     elif isinstance(payload, (bytes, bytearray)):
         payload = SimpleImage.from_bytes(payload)
+
+    overrides: dict[str, object] = {
+        "scale": scale,
+        "force_renderer": force_renderer,
+        "timeout": timeout,
+        "invert": invert,
+        "ascii_only": ascii_only,
+        "fit": fit,
+        "max_cols": max_cols,
+        "img_width": img_width,
+        "tmux_passthrough": tmux_passthrough,
+    }
+    return DrawOutput(core.run_pipeline(payload, overrides=overrides))
+
+
+def generate(
+    data: str,
+    *,
+    ec_level: str = "M",
+    border: int = 4,
+    box_size: int = 1,
+    scale: int | None = None,
+    force_renderer: RendererName | None = None,
+    timeout: float | None = None,
+    invert: bool | None = None,
+    ascii_only: bool | None = None,
+    fit: bool | None = None,
+    max_cols: int | None = None,
+    img_width: int | None = None,
+    tmux_passthrough: str | None = None,
+) -> DrawOutput:
+    """
+    生成二维码并按现有渲染管线输出.
+
+    Args:
+        data: 二维码内容.
+        ec_level: 容错级别（L/M/Q/H）.
+        border: 二维码边距（模块数）.
+        box_size: 单模块像素大小.
+        scale: 渲染缩放倍数.
+        force_renderer: 强制指定渲染器(如 "kitty", "iterm2").
+        timeout: 终端探测超时时间.
+        invert: 是否反转颜色.
+        ascii_only: 是否仅使用 ASCII 字符.
+        fit: 是否按终端列宽自动收束.
+        max_cols: 最大列宽上限.
+        img_width: 渲染宽度（fit=True 时仅显式指定才作为额外上限，fit=False 时未指定默认 40）.
+        tmux_passthrough: tmux 穿透策略(auto/always/never).
+
+    Returns:
+        支持分片迭代与直接字符串输出的包装对象.
+
+    Raises:
+        RuntimeError: 未安装 qrcode 依赖时抛出.
+        ValueError: 参数非法时抛出.
+
+    """
+    if qrcode is None:
+        raise RuntimeError("qrcode dependency is required. Please install terminal-qrcode[qr].")
+    if border < 0:
+        raise ValueError("border must be >= 0")
+    if box_size <= 0:
+        raise ValueError("box_size must be > 0")
+
+    ec_map = {
+        "L": qrcode.constants.ERROR_CORRECT_L,
+        "M": qrcode.constants.ERROR_CORRECT_M,
+        "Q": qrcode.constants.ERROR_CORRECT_Q,
+        "H": qrcode.constants.ERROR_CORRECT_H,
+    }
+    level = ec_level.upper()
+    if level not in ec_map:
+        raise ValueError("ec_level must be one of: L, M, Q, H")
+
+    qr = qrcode.QRCode(
+        version=None,
+        error_correction=ec_map[level],
+        box_size=box_size,
+        border=border,
+    )
+    qr.add_data(data)
+    qr.make(fit=True)
+    payload = SimpleImage.from_qr_matrix(qr.get_matrix())
 
     overrides: dict[str, object] = {
         "scale": scale,

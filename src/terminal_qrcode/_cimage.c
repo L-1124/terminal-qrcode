@@ -1120,6 +1120,95 @@ cimage_matrix_to_image(PyObject *self, PyObject *args)
 }
 
 static PyObject *
+cimage_qr_matrix_to_luma(PyObject *self, PyObject *args)
+{
+    PyObject *matrix_obj;
+    PyObject *rows_fast = NULL;
+    PyObject *pixels = NULL;
+    Py_ssize_t height;
+    Py_ssize_t width;
+    uint8_t *dst;
+    Py_ssize_t y;
+
+    (void)self;
+
+    if (!PyArg_ParseTuple(args, "O", &matrix_obj)) {
+        return NULL;
+    }
+
+    rows_fast = PySequence_Fast(matrix_obj, "QR matrix must be a sequence of rows.");
+    if (rows_fast == NULL) {
+        return NULL;
+    }
+
+    height = PySequence_Fast_GET_SIZE(rows_fast);
+    if (height <= 0) {
+        Py_DECREF(rows_fast);
+        PyErr_SetString(PyExc_ValueError, "Generated QR matrix is empty.");
+        return NULL;
+    }
+
+    {
+        PyObject *first_row_obj = PySequence_Fast_GET_ITEM(rows_fast, 0);
+        PyObject *first_row_fast = PySequence_Fast(first_row_obj, "QR matrix row must be a sequence.");
+        if (first_row_fast == NULL) {
+            Py_DECREF(rows_fast);
+            return NULL;
+        }
+        width = PySequence_Fast_GET_SIZE(first_row_fast);
+        Py_DECREF(first_row_fast);
+    }
+
+    if (width <= 0) {
+        Py_DECREF(rows_fast);
+        PyErr_SetString(PyExc_ValueError, "Generated QR matrix is empty.");
+        return NULL;
+    }
+
+    pixels = PyBytes_FromStringAndSize(NULL, width * height);
+    if (pixels == NULL) {
+        Py_DECREF(rows_fast);
+        return NULL;
+    }
+
+    dst = (uint8_t *)PyBytes_AS_STRING(pixels);
+    for (y = 0; y < height; y++) {
+        PyObject *row_obj = PySequence_Fast_GET_ITEM(rows_fast, y);
+        PyObject *row_fast = PySequence_Fast(row_obj, "QR matrix row must be a sequence.");
+        Py_ssize_t x;
+
+        if (row_fast == NULL) {
+            Py_DECREF(rows_fast);
+            Py_DECREF(pixels);
+            return NULL;
+        }
+        if (PySequence_Fast_GET_SIZE(row_fast) != width) {
+            Py_DECREF(row_fast);
+            Py_DECREF(rows_fast);
+            Py_DECREF(pixels);
+            PyErr_SetString(PyExc_ValueError, "Generated QR matrix rows have inconsistent width.");
+            return NULL;
+        }
+
+        for (x = 0; x < width; x++) {
+            PyObject *item = PySequence_Fast_GET_ITEM(row_fast, x);
+            int dark = PyObject_IsTrue(item);
+            if (dark < 0) {
+                Py_DECREF(row_fast);
+                Py_DECREF(rows_fast);
+                Py_DECREF(pixels);
+                return NULL;
+            }
+            dst[y * width + x] = dark ? 0 : 255;
+        }
+        Py_DECREF(row_fast);
+    }
+
+    Py_DECREF(rows_fast);
+    return Py_BuildValue("(nnN)", width, height, pixels);
+}
+
+static PyObject *
 cimage_otsu_threshold(PyObject *self, PyObject *args)
 {
     Py_buffer in_buf;
@@ -1463,6 +1552,7 @@ static PyMethodDef cimage_methods[] = {
     {"threshold_to_bits", cimage_threshold_to_bits, METH_VARARGS, "Threshold image to 0/1 bits."},
     {"sixel_encode_mono", cimage_sixel_encode_mono, METH_VARARGS, "Encode mono bits to sixel body."},
     {"matrix_to_image", cimage_matrix_to_image, METH_VARARGS, "Matrix to image pixels."},
+    {"qr_matrix_to_luma", cimage_qr_matrix_to_luma, METH_VARARGS, "Convert QR bool matrix to L pixels."},
     {"otsu_threshold", cimage_otsu_threshold, METH_VARARGS, "Otsu threshold calculation."},
     {"find_black_bbox_bits", cimage_find_black_bbox_bits, METH_VARARGS, "Find black bbox in bits."},
     {"sample_matrix_3x3", cimage_sample_matrix_3x3, METH_VARARGS, "Sample QR matrix with 3x3 voting."},

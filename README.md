@@ -7,17 +7,28 @@
 
 ## 📦 安装
 
+基础安装：
+
 ```bash
 uv add terminal-qrcode
+```
+
+启用二维码生成功能（`qrcode` 可选依赖）：
+
+```bash
+uv add "terminal-qrcode[qr]"
 ```
 
 ## ✨ Python API
 
 ```python
-from terminal_qrcode import draw
+from terminal_qrcode import draw, generate
 
 a = draw("test.png", force_renderer="halfblock")
 print(a)
+
+b = generate("https://github.com/L-1124/terminal-qrcode", force_renderer="halfblock")
+print(b)
 ```
 
 ## 🖼️ 支持的输入格式
@@ -44,6 +55,13 @@ print(a)
 
 ```bash
 python -m terminal_qrcode <image_path> [options]
+```
+
+从文本直接生成并渲染二维码：
+
+```bash
+python -m terminal_qrcode -d "hello world"
+echo "hello world" | python -m terminal_qrcode -d -
 ```
 
 ## 🛠️ 本地开发

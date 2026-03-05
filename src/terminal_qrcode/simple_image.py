@@ -92,6 +92,12 @@ class SimpleImage:
         return cls._decode_image_bytes(bytes(data))
 
     @classmethod
+    def from_qr_matrix(cls, matrix: list[list[bool]]) -> "SimpleImage":
+        """从二维码布尔矩阵创建 L 模式图像."""
+        width, height, pixels = _cimage.qr_matrix_to_luma(matrix)
+        return cls("L", (width, height), pixels)
+
+    @classmethod
     def _decode_image_bytes(cls, data: bytes) -> "SimpleImage":
         file_type = _detect_image_type(data)
         if file_type == "png":

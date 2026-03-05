@@ -72,3 +72,24 @@ def test_from_bytes_and_open_consistent_behavior(monkeypatch):
         img_from_open = SimpleImage.open(Path("x.jpg"))
     img_from_bytes = SimpleImage.from_bytes(jpeg_header)
     assert img_from_open.getpixel((0, 0)) == img_from_bytes.getpixel((0, 0))
+
+
+def test_from_qr_matrix_builds_l_image(monkeypatch):
+    """验证 from_qr_matrix 通过 C 接口构造 L 模式图像."""
+    monkeypatch.setattr(simple_image._cimage, "qr_matrix_to_luma", lambda _m: (2, 1, bytes([0, 255])))
+    img = SimpleImage.from_qr_matrix([[True, False]])
+    assert img.mode == "L"
+    assert (img.width, img.height) == (2, 1)
+    assert img.getpixel((0, 0)) == 0
+    assert img.getpixel((1, 0)) == 255
+
+
+def test_from_qr_matrix_propagates_cimage_error(monkeypatch):
+    """验证 from_qr_matrix 透传底层 C 接口异常."""
+
+    def _raise(_m):
+        raise ValueError("bad matrix")
+
+    monkeypatch.setattr(simple_image._cimage, "qr_matrix_to_luma", _raise)
+    with pytest.raises(ValueError, match="bad matrix"):
+        SimpleImage.from_qr_matrix([[True]])

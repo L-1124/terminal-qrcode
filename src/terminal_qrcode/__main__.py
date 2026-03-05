@@ -5,7 +5,7 @@ import logging
 import os
 import sys
 
-from terminal_qrcode import draw
+from terminal_qrcode import draw, generate
 
 
 def main():
@@ -13,7 +13,13 @@ def main():
     parser = argparse.ArgumentParser(description="Terminal Image Renderer")
     parser.add_argument(
         "image_path",
+        nargs="?",
         help="图片路径",
+    )
+    parser.add_argument(
+        "-d",
+        "--data",
+        help="二维码内容；传入 '-' 时从标准输入读取",
     )
     parser.add_argument(
         "-r",
@@ -99,24 +105,47 @@ def main():
         except Exception:  # noqa: BLE001
             pass
 
-    image_path = args.image_path
+    has_image_path = bool(args.image_path)
+    has_data = args.data is not None
+    if has_image_path and has_data:
+        parser.error("image_path 与 --data 不能同时使用")
+    if not has_image_path and not has_data:
+        parser.error("必须提供 image_path 或 --data/-d")
 
-    if not os.path.isfile(image_path):
-        sys.stderr.write(f"Error: Image file not found at '{image_path}'\n")
-        sys.exit(1)
     try:
-        output = draw(
-            image_path,
-            scale=args.scale,
-            force_renderer=args.renderer,
-            timeout=args.timeout,
-            invert=args.invert,
-            ascii_only=args.ascii_only,
-            fit=args.fit,
-            max_cols=args.max_cols,
-            img_width=args.img_width,
-            tmux_passthrough=args.tmux_passthrough,
-        )
+        if has_data:
+            text = sys.stdin.read() if args.data == "-" else args.data
+            output = generate(
+                text,
+                scale=args.scale,
+                force_renderer=args.renderer,
+                timeout=args.timeout,
+                invert=args.invert,
+                ascii_only=args.ascii_only,
+                fit=args.fit,
+                max_cols=args.max_cols,
+                img_width=args.img_width,
+                tmux_passthrough=args.tmux_passthrough,
+            )
+        else:
+            image_path = args.image_path
+            if image_path is None:
+                parser.error("必须提供 image_path 或 --data/-d")
+            if not os.path.isfile(image_path):
+                sys.stderr.write(f"Error: Image file not found at '{image_path}'\n")
+                sys.exit(1)
+            output = draw(
+                image_path,
+                scale=args.scale,
+                force_renderer=args.renderer,
+                timeout=args.timeout,
+                invert=args.invert,
+                ascii_only=args.ascii_only,
+                fit=args.fit,
+                max_cols=args.max_cols,
+                img_width=args.img_width,
+                tmux_passthrough=args.tmux_passthrough,
+            )
 
         sys.stdout.write(str(output))
         sys.stdout.flush()
