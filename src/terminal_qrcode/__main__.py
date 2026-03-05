@@ -47,11 +47,6 @@ def main():
         help="反转亮/暗像素点(由于不同终端颜色主题差异, 此选项有助于获得正确视觉效果)",
     )
     parser.add_argument(
-        "--ascii-only",
-        action="store_true",
-        help="禁用特殊 Unicode 字符, 强制降级为纯 ASCII/全块字符串绘制",
-    )
-    parser.add_argument(
         "--fit",
         action=argparse.BooleanOptionalAction,
         default=True,
@@ -127,7 +122,6 @@ def main():
                 force_renderer=args.renderer,
                 timeout=args.timeout,
                 invert=args.invert,
-                ascii_only=args.ascii_only,
                 fit=args.fit,
                 max_cols=args.max_cols,
                 img_width=args.img_width,
@@ -145,7 +139,6 @@ def main():
                 force_renderer=args.renderer,
                 timeout=args.timeout,
                 invert=args.invert,
-                ascii_only=args.ascii_only,
                 fit=args.fit,
                 max_cols=args.max_cols,
                 img_width=args.img_width,

@@ -60,13 +60,23 @@ def test_draw_flat_kwargs_api(mock_probe, mock_render):
 
     mock_render.side_effect = dummy_gen
     img = SimpleImage.new("RGB", (2, 2), color=(0, 0, 0))
-    list(draw(img, scale=10, invert=True, ascii_only=True, fit=False, max_cols=60, halfblock_mode="area"))
+    list(
+        draw(
+            img,
+            scale=10,
+            invert=True,
+            color_level="ansi256",
+            fit=False,
+            max_cols=60,
+            halfblock_mode="area",
+        )
+    )
 
     args, _ = mock_render.call_args
     passed_config = args[1]
     assert passed_config.scale == 10
     assert passed_config.invert is True
-    assert passed_config.ascii_only is True
+    assert passed_config.color_level == "ansi256"
     assert passed_config.fit is False
     assert passed_config.max_cols == 60
     assert passed_config.halfblock_mode == "area"

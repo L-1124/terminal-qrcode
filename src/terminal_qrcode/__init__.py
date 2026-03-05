@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, overload
 
 from terminal_qrcode import core
-from terminal_qrcode.contracts import HalfBlockMode, ImageInput, RendererName
+from terminal_qrcode.contracts import ColorLevelName, HalfBlockMode, ImageInput, RendererName
 from terminal_qrcode.simple_image import SimpleImage
 
 try:
@@ -38,7 +38,7 @@ def _build_overrides(
     force_renderer: RendererName | None,
     timeout: float | None,
     invert: bool | None,
-    ascii_only: bool | None,
+    color_level: ColorLevelName | None,
     fit: bool | None,
     max_cols: int | None,
     img_width: int | None,
@@ -51,7 +51,7 @@ def _build_overrides(
         "force_renderer": force_renderer,
         "timeout": timeout,
         "invert": invert,
-        "ascii_only": ascii_only,
+        "color_level": color_level,
         "fit": fit,
         "max_cols": max_cols,
         "img_width": img_width,
@@ -114,7 +114,7 @@ def draw(
     force_renderer: RendererName | None = None,
     timeout: float | None = None,
     invert: bool | None = None,
-    ascii_only: bool | None = None,
+    color_level: ColorLevelName | None = None,
     fit: bool | None = None,
     max_cols: int | None = None,
     img_width: int | None = None,
@@ -132,7 +132,7 @@ def draw(
     force_renderer: RendererName | None = None,
     timeout: float | None = None,
     invert: bool | None = None,
-    ascii_only: bool | None = None,
+    color_level: ColorLevelName | None = None,
     fit: bool | None = None,
     max_cols: int | None = None,
     img_width: int | None = None,
@@ -150,7 +150,7 @@ def draw(
     force_renderer: RendererName | None = None,
     timeout: float | None = None,
     invert: bool | None = None,
-    ascii_only: bool | None = None,
+    color_level: ColorLevelName | None = None,
     fit: bool | None = None,
     max_cols: int | None = None,
     img_width: int | None = None,
@@ -167,7 +167,7 @@ def draw(
     force_renderer: RendererName | None = None,
     timeout: float | None = None,
     invert: bool | None = None,
-    ascii_only: bool | None = None,
+    color_level: ColorLevelName | None = None,
     fit: bool | None = None,
     max_cols: int | None = None,
     img_width: int | None = None,
@@ -184,7 +184,7 @@ def draw(
         force_renderer: 强制指定渲染器(如 "kitty", "iterm2").
         timeout: 终端探测超时时间.
         invert: 是否反转颜色.
-        ascii_only: 是否仅使用 ASCII 字符.
+        color_level: 文本颜色等级(auto/none/ansi16/ansi256/truecolor).
         fit: 是否按终端列宽自动收束.
         max_cols: 最大列宽上限.
         img_width: 渲染宽度（fit=True 时仅显式指定才作为额外上限，fit=False 时未指定默认 40）.
@@ -224,7 +224,7 @@ def draw(
         force_renderer=force_renderer,
         timeout=timeout,
         invert=invert,
-        ascii_only=ascii_only,
+        color_level=color_level,
         fit=fit,
         max_cols=max_cols,
         img_width=img_width,
@@ -276,7 +276,7 @@ def generate(
     force_renderer: RendererName | None = None,
     timeout: float | None = None,
     invert: bool | None = None,
-    ascii_only: bool | None = None,
+    color_level: ColorLevelName | None = None,
     fit: bool | None = None,
     max_cols: int | None = None,
     img_width: int | None = None,
@@ -295,7 +295,7 @@ def generate(
         force_renderer: 强制指定渲染器(如 "kitty", "iterm2").
         timeout: 终端探测超时时间.
         invert: 是否反转颜色.
-        ascii_only: 是否仅使用 ASCII 字符.
+        color_level: 文本颜色等级(auto/none/ansi16/ansi256/truecolor).
         fit: 是否按终端列宽自动收束.
         max_cols: 最大列宽上限.
         img_width: 渲染宽度（fit=True 时仅显式指定才作为额外上限，fit=False 时未指定默认 40）.
@@ -342,7 +342,7 @@ def generate(
         force_renderer=force_renderer,
         timeout=timeout,
         invert=invert,
-        ascii_only=ascii_only,
+        color_level=color_level,
         fit=fit,
         max_cols=max_cols,
         img_width=img_width,
