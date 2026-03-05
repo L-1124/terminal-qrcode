@@ -202,33 +202,14 @@ jobs:
             compare_link="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${current_tag}"
           fi
 
-          {
-            cat .github/release-notes-prompt.md
-            echo
-            echo "----"
-            echo "version: ${current_tag#v}"
-            echo "release_date: ${release_date}"
-            echo "highlights:"
-            echo "- 本次版本包含以下提交摘要，请按主题归纳后输出。"
-            echo "changes_raw:"
-            git log --no-merges --pretty='- %s (%h)' "${range}" | head -n 200 || true
-            echo "breaking_changes:"
-            echo "- 未显式提供。若提交中无明确信息，请省略该章节。"
-            echo "deprecations:"
-            echo "- 未显式提供。"
-            echo "fixes:"
-            echo "- 请从提交中提取 bugfix。"
-            echo "perf_notes:"
-            echo "- 请从提交中提取性能相关变更；无数据不要量化。"
-            echo "api_cli_changes:"
-            echo "- 请关注 python API 与 python -m terminal_qrcode CLI 参数/行为变化。"
-            echo "compatibility_notes:"
-            echo "- 请关注 Kitty/iTerm2/WezTerm/Sixel/Halfblock、Windows/POSIX、tmux 行为。"
-            echo "install_cmd: uv add terminal-qrcode"
-            echo "thanks:"
-            echo "- 感谢所有贡献者。"
-            echo "compare_link: ${compare_link}"
-          } > "${RUNNER_TEMP}/release-note.prompt.txt"
+          git log --no-merges --pretty='- %s (%h)' "${range}" | head -n 200 > "${RUNNER_TEMP}/release-note.changes.txt" || true
+          uv run --no-project python .github/scripts/build_release_note_prompt.py \
+            --rules-file .github/release-notes-prompt.md \
+            --output "${RUNNER_TEMP}/release-note.prompt.yml" \
+            --version "${current_tag#v}" \
+            --release-date "${release_date}" \
+            --changes-file "${RUNNER_TEMP}/release-note.changes.txt" \
+            --compare-link "${compare_link}"
 
       - name: Validate GitHub MCP token
         shell: bash
@@ -244,16 +225,20 @@ jobs:
         id: ai_release_notes
         uses: actions/ai-inference@v1
         with:
-          prompt-file: ${{ runner.temp }}/release-note.prompt.txt
-          model: openai/gpt-4o
-          max-tokens: 1800
+          prompt-file: ${{ runner.temp }}/release-note.prompt.yml
           enable-github-mcp: true
           github-mcp-token: ${{ secrets.MCP_PAT }}
 
-      - name: Save generated release notes
+      - name: Save generated release notes JSON
         shell: bash
         run: |
-          cp "${{ steps.ai_release_notes.outputs.response-file }}" release-notes.md
+          cp "${{ steps.ai_release_notes.outputs.response-file }}" release-notes.json
+
+      - name: Render release notes markdown
+        run: |
+          uv run --no-project python .github/scripts/render_release_notes.py \
+            --input release-notes.json \
+            --output release-notes.md
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2

@@ -82,34 +82,33 @@
 - 若涉及 tmux，必须明确“tmux 内是否需要额外配置”。
 - 若仅为测试、CI、重构，需标注“对终端用户行为无直接变化”（如果属实）。
 
-## 输出示例骨架（仅结构示例，不要原样照抄）
+## 输出结构示例（JSON，仅结构示例）
 
-````md
-# terminal-qrcode v{version}
-
-一句话版本摘要。
-
-## ✨ 新增功能
-
-- ...
-
-## 🐛 问题修复
-
-- ...
-
-## 🧩 API / CLI 变化
-
-- ...
-
-## 📦 安装与升级
-
-```bash
-uv add terminal-qrcode
-python -m terminal_qrcode --help
+```json
+{
+  "version": "{version}",
+  "overview": "1~2句版本总览",
+  "sections": [
+    {
+      "title": "✨ 新增功能",
+      "items": [
+        "改了什么 + 对用户的影响"
+      ]
+    },
+    {
+      "title": "🐛 问题修复",
+      "items": [
+        "改了什么 + 对用户的影响"
+      ]
+    }
+  ],
+  "install_commands": [
+    "uv add terminal-qrcode",
+    "python -m terminal_qrcode --help"
+  ],
+  "thanks": [
+    "感谢所有贡献者"
+  ],
+  "compare_link": "{compare_link}"
+}
 ```
-
-## 🙏 致谢
-
-- ...
-
-````
