@@ -60,7 +60,7 @@ def test_draw_flat_kwargs_api(mock_probe, mock_render):
 
     mock_render.side_effect = dummy_gen
     img = SimpleImage.new("RGB", (2, 2), color=(0, 0, 0))
-    list(draw(img, scale=10, invert=True, ascii_only=True, fit=False, max_cols=60))
+    list(draw(img, scale=10, invert=True, ascii_only=True, fit=False, max_cols=60, halfblock_mode="area"))
 
     args, _ = mock_render.call_args
     passed_config = args[1]
@@ -69,6 +69,7 @@ def test_draw_flat_kwargs_api(mock_probe, mock_render):
     assert passed_config.ascii_only is True
     assert passed_config.fit is False
     assert passed_config.max_cols == 60
+    assert passed_config.halfblock_mode == "area"
 
 
 @patch("terminal_qrcode.core.run_pipeline")
@@ -233,7 +234,7 @@ def test_generate_returns_draw_output(mock_run_pipeline, monkeypatch):
     )
     monkeypatch.setattr(terminal_qrcode, "qrcode", fake_qrcode)
 
-    result = generate("hello", force_renderer="halfblock", img_width=2)
+    result = generate("hello", force_renderer="halfblock", img_width=2, halfblock_mode="area")
     assert isinstance(result, DrawOutput)
     assert str(result) == "qr"
 
@@ -245,6 +246,7 @@ def test_generate_returns_draw_output(mock_run_pipeline, monkeypatch):
     assert payload.height == 2
     assert kwargs["overrides"]["force_renderer"] == "halfblock"
     assert kwargs["overrides"]["img_width"] == 2
+    assert kwargs["overrides"]["halfblock_mode"] == "area"
 
 
 def test_generate_rejects_invalid_ec_level(monkeypatch):

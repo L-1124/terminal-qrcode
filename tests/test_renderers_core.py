@@ -49,6 +49,7 @@ def test_render_config_defaults():
     assert config.fit is True
     assert config.max_cols is None
     assert config.img_width is None
+    assert config.halfblock_mode == "precision"
 
 
 def _build_qr_like_matrix(size: int = 25) -> list[list[bool]]:
@@ -606,19 +607,58 @@ def test_halfblock_strict_never_produces_nonstandard_qr_size(monkeypatch):
     assert line_len >= 21
 
 
-def test_halfblock_strict_wide_terminal_uses_larger_scale(monkeypatch):
-    """验证宽终端下严格路径会使用更大的整数放大倍数."""
+def test_halfblock_strict_precision_mode_keeps_native_scale(monkeypatch):
+    """验证 precision 模式下宽终端仍保持原生 scale=1."""
     monkeypatch.setattr(layout, "get_terminal_size", lambda fallback: os.terminal_size((140, 60)))
     matrix = _build_qr_like_matrix(size=25)
     monkeypatch.setattr(renderers, "strict_restore_qr_matrix", lambda *_args, **_kwargs: matrix)
 
     img = _strict_candidate_image()
     renderer = HalfBlockRenderer()
-    output = "".join(renderer.render(img, RenderConfig(fit=True)))
+    output = "".join(renderer.render(img, RenderConfig(fit=True, halfblock_mode="precision")))
     first_line = output.splitlines()[0]
-    # 25 + 2*2 = 29 (scale=1); avail_cols=139 可容纳 scale=4 → 29*4=116。
-    # 旧代码只用 30% 预算 → display_cols=41 → scale=1 → 宽度仅 29。
-    assert len(first_line) > 29
+    assert len(first_line) == 29
+
+
+def test_halfblock_strict_area_mode_upscales_with_even_scale(monkeypatch):
+    """验证 area 模式会放大且仅使用偶数 scale."""
+    monkeypatch.setattr(layout, "get_terminal_size", lambda fallback: os.terminal_size((140, 60)))
+    matrix = _build_qr_like_matrix(size=25)
+    monkeypatch.setattr(renderers, "strict_restore_qr_matrix", lambda *_args, **_kwargs: matrix)
+
+    img = _strict_candidate_image()
+    renderer = HalfBlockRenderer()
+    output = "".join(renderer.render(img, RenderConfig(fit=True, halfblock_mode="area")))
+    first_line = output.splitlines()[0]
+    # base=29，最大可用偶数 scale=4 -> 29*4=116。
+    assert len(first_line) == 116
+
+
+def test_halfblock_strict_area_mode_quantizes_odd_scale_to_even(monkeypatch):
+    """验证 area 模式会将候选奇数 scale 量化到偶数."""
+    monkeypatch.setattr(layout, "get_terminal_size", lambda fallback: os.terminal_size((88, 60)))
+    matrix = _build_qr_like_matrix(size=25)
+    monkeypatch.setattr(renderers, "strict_restore_qr_matrix", lambda *_args, **_kwargs: matrix)
+
+    img = _strict_candidate_image()
+    renderer = HalfBlockRenderer()
+    output = "".join(renderer.render(img, RenderConfig(fit=True, halfblock_mode="area")))
+    first_line = output.splitlines()[0]
+    # avail_cols=87，base=29，候选 scale=3，会量化为 2 -> 58。
+    assert len(first_line) == 58
+
+
+def test_halfblock_strict_area_mode_respects_row_budget(monkeypatch):
+    """验证 area 模式放大后输出行数不超过可用终端行."""
+    monkeypatch.setattr(layout, "get_terminal_size", lambda fallback: os.terminal_size((200, 58)))
+    matrix = _build_qr_like_matrix(size=25)
+    monkeypatch.setattr(renderers, "strict_restore_qr_matrix", lambda *_args, **_kwargs: matrix)
+
+    img = _strict_candidate_image()
+    renderer = HalfBlockRenderer()
+    output = "".join(renderer.render(img, RenderConfig(fit=True, halfblock_mode="area")))
+    lines = output.splitlines()
+    assert len(lines) <= 57
 
 
 def test_halfblock_strict_reduces_border_before_resize(monkeypatch):

@@ -70,6 +70,12 @@ def main():
         help="fit=True 时仅显式指定才作为列宽上限，fit=False 时未指定则使用默认 40 列",
     )
     parser.add_argument(
+        "--halfblock-mode",
+        choices=["precision", "area"],
+        default="precision",
+        help="halfblock 严格二维码路径策略（precision 保真优先，area 面积优先）",
+    )
+    parser.add_argument(
         "--tmux-passthrough",
         choices=["auto", "always", "never"],
         default="auto",
@@ -125,6 +131,7 @@ def main():
                 fit=args.fit,
                 max_cols=args.max_cols,
                 img_width=args.img_width,
+                halfblock_mode=args.halfblock_mode,
                 tmux_passthrough=args.tmux_passthrough,
             )
         else:
@@ -142,6 +149,7 @@ def main():
                 fit=args.fit,
                 max_cols=args.max_cols,
                 img_width=args.img_width,
+                halfblock_mode=args.halfblock_mode,
                 tmux_passthrough=args.tmux_passthrough,
             )
 

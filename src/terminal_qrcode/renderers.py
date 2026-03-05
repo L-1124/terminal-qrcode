@@ -2,6 +2,7 @@
 
 import base64
 import logging
+import math
 import os
 import subprocess
 from collections.abc import Callable, Generator, Hashable
@@ -12,7 +13,6 @@ from terminal_qrcode.contracts import RenderConfig, Renderer, TerminalCapability
 from terminal_qrcode.layout import (
     _build_fit_plan,
     _cells_to_pixels,
-    _choose_halfblock_scale,
     _matrix_to_image,
     _pad_border,
     _resize_image_to_cols,
@@ -158,18 +158,39 @@ class HalfBlockRenderer:
         while border > 0 and (len(strict_matrix) + 2 * border) > effective_cols:
             border -= 1
 
-        base_w = len(strict_matrix) + 2 * border
+        base_matrix = _pad_border(strict_matrix, border)
+        base_h = len(base_matrix)
+        base_w = len(base_matrix[0]) if base_h > 0 else 0
         if base_w > effective_cols:
-            return _resize_matrix_to_cols(_pad_border(strict_matrix, border), effective_cols)
+            return _resize_matrix_to_cols(base_matrix, effective_cols)
 
-        scale, border = _choose_halfblock_scale(
-            len(strict_matrix),
-            border,
-            effective_cols,
-            plan.avail_rows,
-            _HALFBLOCK_MAX_SCALE,
-        )
-        return _upscale_matrix_nn(_pad_border(strict_matrix, border), scale)
+        # 保持 ascii_only 原有逻辑，避免影响非半块字符模式下的既有输出。
+        if config.ascii_only:
+            scale = self._choose_scale_area_mode(base_w, base_h, effective_cols, plan.avail_rows)
+            return _upscale_matrix_nn(base_matrix, scale)
+
+        if config.halfblock_mode == "precision":
+            return base_matrix
+
+        scale = self._choose_scale_area_mode(base_w, base_h, effective_cols, plan.avail_rows)
+        return _upscale_matrix_nn(base_matrix, scale)
+
+    def _choose_scale_area_mode(self, base_w: int, base_h: int, avail_cols: int, avail_rows: int) -> int:
+        """为面积优先模式选择可用整数 scale（仅允许偶数，且满足精确行高预算）."""
+        if base_w <= 0 or base_h <= 0:
+            return 1
+        max_by_width = avail_cols // base_w
+        max_by_rows = (2 * avail_rows) // base_h
+        s_max = max(1, min(max_by_width, max_by_rows, _HALFBLOCK_MAX_SCALE))
+        if s_max < 2:
+            return 1
+        if s_max % 2 != 0:
+            s_max -= 1
+        while s_max >= 2:
+            if (base_w * s_max) <= avail_cols and math.ceil((base_h * s_max) / 2) <= avail_rows:
+                return s_max
+            s_max -= 2
+        return 1
 
     def _normalize_image_fallback(self, payload: SimpleImage, config: RenderConfig) -> list[list[bool]]:
         """实现普通图像的回退规约逻辑."""

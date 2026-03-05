@@ -8,6 +8,7 @@ from typing import Literal, Protocol, runtime_checkable
 from terminal_qrcode.simple_image import SimpleImage
 
 RendererName = Literal["kitty", "iterm2", "wezterm", "sixel", "halfblock"]
+HalfBlockMode = Literal["precision", "area"]
 
 
 @dataclass(frozen=True)
@@ -22,6 +23,7 @@ class RenderConfig:
     fit: bool = True
     max_cols: int | None = None
     img_width: int | None = None
+    halfblock_mode: HalfBlockMode = "precision"
     tmux_passthrough: Literal["auto", "always", "never"] = "auto"
 
 

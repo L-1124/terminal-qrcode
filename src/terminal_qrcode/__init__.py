@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, overload
 
 from terminal_qrcode import core
-from terminal_qrcode.contracts import ImageInput, RendererName
+from terminal_qrcode.contracts import HalfBlockMode, ImageInput, RendererName
 from terminal_qrcode.simple_image import SimpleImage
 
 try:
@@ -42,6 +42,7 @@ def _build_overrides(
     fit: bool | None,
     max_cols: int | None,
     img_width: int | None,
+    halfblock_mode: HalfBlockMode | None,
     tmux_passthrough: str | None,
 ) -> dict[str, object]:
     """构建渲染覆盖参数字典."""
@@ -54,6 +55,7 @@ def _build_overrides(
         "fit": fit,
         "max_cols": max_cols,
         "img_width": img_width,
+        "halfblock_mode": halfblock_mode,
         "tmux_passthrough": tmux_passthrough,
     }
 
@@ -116,6 +118,7 @@ def draw(
     fit: bool | None = None,
     max_cols: int | None = None,
     img_width: int | None = None,
+    halfblock_mode: HalfBlockMode | None = None,
     tmux_passthrough: str | None = None,
 ) -> DrawOutput: ...
 
@@ -133,6 +136,7 @@ def draw(
     fit: bool | None = None,
     max_cols: int | None = None,
     img_width: int | None = None,
+    halfblock_mode: HalfBlockMode | None = None,
     tmux_passthrough: str | None = None,
 ) -> DrawOutput: ...
 
@@ -150,6 +154,7 @@ def draw(
     fit: bool | None = None,
     max_cols: int | None = None,
     img_width: int | None = None,
+    halfblock_mode: HalfBlockMode | None = None,
     tmux_passthrough: str | None = None,
 ) -> DrawOutput: ...
 
@@ -166,6 +171,7 @@ def draw(
     fit: bool | None = None,
     max_cols: int | None = None,
     img_width: int | None = None,
+    halfblock_mode: HalfBlockMode | None = None,
     tmux_passthrough: str | None = None,
 ) -> DrawOutput:
     """
@@ -182,6 +188,7 @@ def draw(
         fit: 是否按终端列宽自动收束.
         max_cols: 最大列宽上限.
         img_width: 渲染宽度（fit=True 时仅显式指定才作为额外上限，fit=False 时未指定默认 40）.
+        halfblock_mode: halfblock 严格路径策略（precision/area）.
         tmux_passthrough: tmux 穿透策略(auto/always/never).
 
     Returns:
@@ -221,6 +228,7 @@ def draw(
         fit=fit,
         max_cols=max_cols,
         img_width=img_width,
+        halfblock_mode=halfblock_mode,
         tmux_passthrough=tmux_passthrough,
     )
     return DrawOutput(core.run_pipeline(payload, overrides=overrides))
@@ -262,7 +270,7 @@ def generate(
     data: str,
     *,
     ec_level: str = "M",
-    border: int = 4,
+    border: int = 2,
     box_size: int = 1,
     scale: int | None = None,
     force_renderer: RendererName | None = None,
@@ -272,6 +280,7 @@ def generate(
     fit: bool | None = None,
     max_cols: int | None = None,
     img_width: int | None = None,
+    halfblock_mode: HalfBlockMode | None = None,
     tmux_passthrough: str | None = None,
 ) -> DrawOutput:
     """
@@ -290,6 +299,7 @@ def generate(
         fit: 是否按终端列宽自动收束.
         max_cols: 最大列宽上限.
         img_width: 渲染宽度（fit=True 时仅显式指定才作为额外上限，fit=False 时未指定默认 40）.
+        halfblock_mode: halfblock 严格路径策略（precision/area）.
         tmux_passthrough: tmux 穿透策略(auto/always/never).
 
     Returns:
@@ -336,6 +346,7 @@ def generate(
         fit=fit,
         max_cols=max_cols,
         img_width=img_width,
+        halfblock_mode=halfblock_mode,
         tmux_passthrough=tmux_passthrough,
     )
     return DrawOutput(core.run_pipeline(payload, overrides=overrides))
