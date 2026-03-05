@@ -27,18 +27,15 @@ def test_main_rejects_when_no_image_arg(monkeypatch):
 
 
 @pytest.mark.parametrize(
-    ("extra_args", "expected_fit", "expected_max_cols", "expected_halfblock_mode"),
+    ("extra_args", "expected_fit", "expected_max_cols"),
     [
-        ([], True, None, "precision"),
-        (["--fit"], True, None, "precision"),
-        (["--no-fit"], False, None, "precision"),
-        (["--max-cols", "66"], True, 66, "precision"),
-        (["--halfblock-mode", "area"], True, None, "area"),
+        ([], True, None),
+        (["--fit"], True, None),
+        (["--no-fit"], False, None),
+        (["--max-cols", "66"], True, 66),
     ],
 )
-def test_main_forwarding_core_flags(
-    monkeypatch, tmp_path, extra_args, expected_fit, expected_max_cols, expected_halfblock_mode
-):
+def test_main_forwarding_core_flags(monkeypatch, tmp_path, extra_args, expected_fit, expected_max_cols):
     """验证 CLI 核心参数透传行为（fit/max-cols/img-width 默认值）."""
     path = tmp_path / "x.png"
     path.write_bytes(b"dummy")
@@ -54,7 +51,6 @@ def test_main_forwarding_core_flags(
     assert seen.get("fit") is expected_fit
     assert seen.get("max_cols") == expected_max_cols
     assert seen.get("img_width") is None
-    assert seen.get("halfblock_mode") == expected_halfblock_mode
 
 
 def test_main_accepts_data_option(monkeypatch, capsys):
@@ -73,7 +69,6 @@ def test_main_accepts_data_option(monkeypatch, capsys):
     assert "ok-data" in out
     assert seen["data"] == "hello"
     assert seen["force_renderer"] == "halfblock"
-    assert seen["halfblock_mode"] == "precision"
 
 
 def test_main_rejects_when_image_and_data_are_both_set(monkeypatch):

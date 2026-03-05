@@ -341,6 +341,7 @@ def test_halfblock_invert_behavior():
     assert "█" not in out_invert
     assert " " in out_invert
 
+
 def test_halfblock_color_level_none_keeps_plain_halfblocks():
     """验证 color_level=none 时输出不包含 ANSI 颜色序列."""
     matrix = [[True, False, True], [False, True, False]]

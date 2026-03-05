@@ -27,6 +27,7 @@ __version__ = "0.1.1"
 __all__ = [
     "SimpleImage",
     "DrawOutput",
+    "decode_and_redraw",
     "draw",
     "generate",
 ]
@@ -34,9 +35,7 @@ __all__ = [
 
 def _build_overrides(
     *,
-    scale: int | None,
     force_renderer: RendererName | None,
-    timeout: float | None,
     invert: bool | None,
     color_level: ColorLevelName | None,
     fit: bool | None,
@@ -47,9 +46,7 @@ def _build_overrides(
 ) -> dict[str, object]:
     """构建渲染覆盖参数字典."""
     return {
-        "scale": scale,
         "force_renderer": force_renderer,
-        "timeout": timeout,
         "invert": invert,
         "color_level": color_level,
         "fit": fit,
@@ -109,10 +106,7 @@ class DrawOutput:
 def draw(
     payload: ImageInput,
     *,
-    scale: int | None = None,
-    decode_first: bool | None = None,
     force_renderer: RendererName | None = None,
-    timeout: float | None = None,
     invert: bool | None = None,
     color_level: ColorLevelName | None = None,
     fit: bool | None = None,
@@ -127,10 +121,7 @@ def draw(
 def draw(
     payload: str | Path,
     *,
-    scale: int | None = None,
-    decode_first: bool | None = None,
     force_renderer: RendererName | None = None,
-    timeout: float | None = None,
     invert: bool | None = None,
     color_level: ColorLevelName | None = None,
     fit: bool | None = None,
@@ -145,10 +136,7 @@ def draw(
 def draw(
     payload: bytes | bytearray,
     *,
-    scale: int | None = None,
-    decode_first: bool | None = None,
     force_renderer: RendererName | None = None,
-    timeout: float | None = None,
     invert: bool | None = None,
     color_level: ColorLevelName | None = None,
     fit: bool | None = None,
@@ -162,10 +150,7 @@ def draw(
 def draw(
     payload: ImageInput | str | Path | bytes | bytearray,
     *,
-    scale: int | None = None,
-    decode_first: bool | None = None,
     force_renderer: RendererName | None = None,
-    timeout: float | None = None,
     invert: bool | None = None,
     color_level: ColorLevelName | None = None,
     fit: bool | None = None,
@@ -179,10 +164,7 @@ def draw(
 
     Args:
         payload: 图像对象或本地图片路径（str/Path）.
-        scale: 渲染缩放倍数.
-        decode_first: 是否先尝试解码二维码内容并重建后再渲染.
         force_renderer: 强制指定渲染器(如 "kitty", "iterm2").
-        timeout: 终端探测超时时间.
         invert: 是否反转颜色.
         color_level: 文本颜色等级(auto/none/ansi16/ansi256/truecolor).
         fit: 是否按终端列宽自动收束.
@@ -216,13 +198,9 @@ def draw(
         payload = SimpleImage.open(payload)
     elif isinstance(payload, (bytes, bytearray)):
         payload = SimpleImage.from_bytes(payload)
-    if decode_first:
-        payload = _decode_qr_first(payload)
 
     overrides = _build_overrides(
-        scale=scale,
         force_renderer=force_renderer,
-        timeout=timeout,
         invert=invert,
         color_level=color_level,
         fit=fit,
@@ -234,17 +212,22 @@ def draw(
     return DrawOutput(core.run_pipeline(payload, overrides=overrides))
 
 
-def _decode_qr_first(payload: ImageInput) -> ImageInput:
-    """尝试先解码二维码内容，再重建高精度二维码图像."""
+def decode_and_redraw(payload: ImageInput | str | Path | bytes | bytearray) -> ImageInput:
+    """先尝试解码二维码内容，再重建高精度二维码图像."""
     if qrcode is None or pyzarb is None:
-        raise RuntimeError("decode_first requires optional dependency group [pyzarb].")
+        raise RuntimeError("decode_and_redraw requires optional dependency group [pyzarb].")
     qrcode_mod = qrcode
 
-    image = payload if isinstance(payload, SimpleImage) else core._to_simple_image(payload)
+    image_input = payload
+    if isinstance(image_input, (str, Path)):
+        image_input = SimpleImage.open(image_input)
+    elif isinstance(image_input, (bytes, bytearray)):
+        image_input = SimpleImage.from_bytes(image_input)
+    image = image_input if isinstance(image_input, SimpleImage) else core._to_simple_image(image_input)
     luma = image if image.mode == "L" else image.convert("L")
     decoded = pyzarb.decode((bytes(luma._data), luma.width, luma.height))
     if not decoded:
-        return payload
+        return image
 
     result = None
     for item in decoded:
@@ -253,7 +236,7 @@ def _decode_qr_first(payload: ImageInput) -> ImageInput:
             result = item
             break
     if result is None:
-        return payload
+        return image
 
     qr = qrcode_mod.QRCode(
         version=None,
@@ -271,10 +254,7 @@ def generate(
     *,
     ec_level: str = "M",
     border: int = 2,
-    box_size: int = 1,
-    scale: int | None = None,
     force_renderer: RendererName | None = None,
-    timeout: float | None = None,
     invert: bool | None = None,
     color_level: ColorLevelName | None = None,
     fit: bool | None = None,
@@ -290,10 +270,7 @@ def generate(
         data: 二维码内容.
         ec_level: 容错级别（L/M/Q/H）.
         border: 二维码边距（模块数）.
-        box_size: 单模块像素大小.
-        scale: 渲染缩放倍数.
         force_renderer: 强制指定渲染器(如 "kitty", "iterm2").
-        timeout: 终端探测超时时间.
         invert: 是否反转颜色.
         color_level: 文本颜色等级(auto/none/ansi16/ansi256/truecolor).
         fit: 是否按终端列宽自动收束.
@@ -314,8 +291,6 @@ def generate(
         raise RuntimeError("qrcode dependency is required. Please install terminal-qrcode[qr].")
     if border < 0:
         raise ValueError("border must be >= 0")
-    if box_size <= 0:
-        raise ValueError("box_size must be > 0")
 
     ec_map = {
         "L": qrcode.constants.ERROR_CORRECT_L,
@@ -330,7 +305,7 @@ def generate(
     qr = qrcode.QRCode(
         version=None,
         error_correction=ec_map[level],
-        box_size=box_size,
+        box_size=1,
         border=border,
     )
     qr.add_data(data)
@@ -338,9 +313,7 @@ def generate(
     payload = SimpleImage.from_qr_matrix(qr.get_matrix())
 
     overrides = _build_overrides(
-        scale=scale,
         force_renderer=force_renderer,
-        timeout=timeout,
         invert=invert,
         color_level=color_level,
         fit=fit,

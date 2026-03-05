@@ -28,20 +28,6 @@ def main():
         help="强制指定渲染器类型",
     )
     parser.add_argument(
-        "-s",
-        "--scale",
-        type=int,
-        default=8,
-        help="图形协议下的图片缩放比例",
-    )
-    parser.add_argument(
-        "-t",
-        "--timeout",
-        type=float,
-        default=0.1,
-        help="终端探测超时时间(秒)",
-    )
-    parser.add_argument(
         "--invert",
         action="store_true",
         help="反转亮/暗像素点(由于不同终端颜色主题差异, 此选项有助于获得正确视觉效果)",
@@ -63,18 +49,6 @@ def main():
         type=int,
         default=None,
         help="fit=True 时仅显式指定才作为列宽上限，fit=False 时未指定则使用默认 40 列",
-    )
-    parser.add_argument(
-        "--halfblock-mode",
-        choices=["precision", "area"],
-        default="precision",
-        help="halfblock 严格二维码路径策略（precision 保真优先，area 面积优先）",
-    )
-    parser.add_argument(
-        "--tmux-passthrough",
-        choices=["auto", "always", "never"],
-        default="auto",
-        help="tmux 穿透策略(auto 根据 allow-passthrough 自动判定)",
     )
     parser.add_argument(
         "--debug",
@@ -118,15 +92,11 @@ def main():
             text = sys.stdin.read() if args.data == "-" else args.data
             output = generate(
                 text,
-                scale=args.scale,
                 force_renderer=args.renderer,
-                timeout=args.timeout,
                 invert=args.invert,
                 fit=args.fit,
                 max_cols=args.max_cols,
                 img_width=args.img_width,
-                halfblock_mode=args.halfblock_mode,
-                tmux_passthrough=args.tmux_passthrough,
             )
         else:
             image_path = args.image_path
@@ -135,15 +105,11 @@ def main():
                 sys.exit(1)
             output = draw(
                 image_path,
-                scale=args.scale,
                 force_renderer=args.renderer,
-                timeout=args.timeout,
                 invert=args.invert,
                 fit=args.fit,
                 max_cols=args.max_cols,
                 img_width=args.img_width,
-                halfblock_mode=args.halfblock_mode,
-                tmux_passthrough=args.tmux_passthrough,
             )
 
         sys.stdout.write(str(output))
