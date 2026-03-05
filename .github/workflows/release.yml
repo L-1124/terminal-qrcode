@@ -36,6 +36,9 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Set up uv
+        uses: astral-sh/setup-uv@v7
+
       - name: Cache cibuildwheel (Linux)
         if: runner.os == 'Linux'
         uses: actions/cache@v5
@@ -98,59 +101,7 @@ jobs:
           output-dir: wheelhouse
 
       - name: Validate C extension in wheel
-        shell: python
-        run: |
-          import glob
-          import os
-          import re
-          import subprocess
-          import sys
-          import tempfile
-          import venv
-          from pathlib import Path
-
-          runner_os = os.environ["RUNNER_OS"]
-          wheels = sorted(glob.glob("wheelhouse/*.whl"))
-          if not wheels:
-              raise SystemExit("No wheel file found in wheelhouse/")
-          interp_tag = f"cp{sys.version_info.major}{sys.version_info.minor}"
-          supported = [
-              wheel for wheel in wheels if re.search(rf"-{interp_tag}-{interp_tag}-", Path(wheel).name)
-          ]
-          if not supported:
-              print(f"No wheel matching interpreter tag {interp_tag}; skip smoke validation.")
-              raise SystemExit(0)
-          code = "\n".join(
-              [
-                  "from terminal_qrcode.simple_image import SimpleImage",
-                  "from terminal_qrcode import codecs",
-                  "",
-                  "png = SimpleImage.new('RGB', (1, 1), (1, 2, 3)).to_png_bytes()",
-                  "mode, width, height, data = codecs.decode_png_with_libpng(png)",
-                  "if mode != 'RGB' or width != 1 or height != 1 or len(data) != 3:",
-                  "    raise SystemExit('PNG C backend smoke test failed')",
-                  "",
-                  "for name in ['decode_jpeg_rgb', 'decode_webp_rgba']:",
-                  "    if not hasattr(codecs, name):",
-                  "        raise SystemExit(f'missing API: {name}')",
-                  "",
-                  "print('C extension smoke test passed.')",
-              ]
-          )
-          for wheel_path in supported:
-              venv_dir = Path(tempfile.mkdtemp(prefix="tq-check-"))
-              venv.create(venv_dir, with_pip=True, clear=True)
-
-              if runner_os == "Windows":
-                  py = venv_dir / "Scripts" / "python.exe"
-              else:
-                  py = venv_dir / "bin" / "python"
-
-              subprocess.run([str(py), "-m", "pip", "install", "--upgrade", "pip"], check=True)
-              subprocess.run([str(py), "-m", "pip", "install", wheel_path], check=True)
-
-              subprocess.run([str(py), "-c", code], check=True)
-              print(f"C extension smoke test passed for {wheel_path}")
+        run: uv run --no-project python .github/scripts/validate_wheel_smoke.py
 
       - name: Upload wheel artifacts
         uses: actions/upload-artifact@v7
@@ -280,11 +231,14 @@ jobs:
           } > "${RUNNER_TEMP}/release-note.prompt.txt"
 
       - name: Validate GitHub MCP token
-        if: ${{ secrets.MCP_PAT == '' }}
         shell: bash
+        env:
+          MCP_PAT: ${{ secrets.MCP_PAT }}
         run: |
-          echo "::error::Missing secret MCP_PAT. GitHub MCP requires a Personal Access Token (PAT)."
-          exit 1
+          if [ -z "${MCP_PAT}" ]; then
+            echo "::error::Missing secret MCP_PAT. GitHub MCP requires a Personal Access Token (PAT)."
+            exit 1
+          fi
 
       - name: Generate release notes with AI Inference
         id: ai_release_notes

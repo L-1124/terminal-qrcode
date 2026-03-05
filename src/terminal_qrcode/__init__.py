@@ -21,7 +21,7 @@ except ImportError:
 
 pyzarb: Any | None = _pyzarb
 
-__version__ = "0.1.0"
+__version__ = "0.1.1"
 
 
 __all__ = [
