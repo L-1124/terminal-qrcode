@@ -319,6 +319,19 @@ dev = [
     { name = "ruff" },
     { name = "setuptools" },
 ]
+integration = [
+    { name = "pyzbar" },
+    { name = "qrcode" },
+]
+lint = [
+    { name = "pre-commit" },
+    { name = "pyrefly" },
+    { name = "ruff" },
+]
+test = [
+    { name = "pytest" },
+    { name = "setuptools" },
+]
 
 [package.metadata]
 requires-dist = [
@@ -336,6 +349,19 @@ dev = [
     { name = "pyzbar", specifier = ">=0.1.9" },
     { name = "qrcode", specifier = ">=8.2" },
     { name = "ruff", specifier = ">=0.1.0" },
+    { name = "setuptools", specifier = ">=82.0.0" },
+]
+integration = [
+    { name = "pyzbar", specifier = ">=0.1.9" },
+    { name = "qrcode", specifier = ">=8.2" },
+]
+lint = [
+    { name = "pre-commit", specifier = ">=4.5.1" },
+    { name = "pyrefly", specifier = ">=0.55.0" },
+    { name = "ruff", specifier = ">=0.1.0" },
+]
+test = [
+    { name = "pytest", specifier = ">=7.4.0" },
     { name = "setuptools", specifier = ">=82.0.0" },
 ]
 

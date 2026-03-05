@@ -109,22 +109,35 @@ class HalfBlockRenderer:
         """将不同类型的输入归一化为 bool 矩阵, 并确定是否需要反色."""
         invert_for_render = bool(config.invert)
 
-        # 1. 如果已经是矩阵，直接处理并返回
         if not isinstance(payload, SimpleImage):
             target_cols = _resolve_target_cols(config)
             matrix = _resize_matrix_to_cols([list(row) for row in payload], target_cols)
             return matrix, invert_for_render
 
-        # 2. 如果是图像，尝试“严格二维码还原”路径
-        strict_matrix = strict_restore_qr_matrix(payload.copy(), config)
-        if strict_matrix is not None:
-            matrix = self._resize_strict_matrix(strict_matrix, config)
-            # 严格路径已应用显式/自动极性，渲染阶段不再二次反转
-            return matrix, False
+        if self._quick_qr_prior(payload):
+            strict_matrix = strict_restore_qr_matrix(payload.copy(), config)
+            if strict_matrix is not None:
+                matrix = self._resize_strict_matrix(strict_matrix, config)
 
-        # 3. 回退路径：普通图像灰度化与阈值处理
+                return matrix, False
+
         matrix = self._normalize_image_fallback(payload, config)
         return matrix, invert_for_render
+
+    def _quick_qr_prior(self, image: SimpleImage) -> bool:
+        """快速判断图像是否值得走严格二维码还原路径."""
+        if min(image.width, image.height) < 21:
+            return False
+        bbox = image.getbbox_nonwhite()
+        if bbox is None:
+            return False
+        left, top, right, bottom = bbox
+        bbox_w = right - left
+        bbox_h = bottom - top
+        if bbox_w < 21 or bbox_h < 21:
+            return False
+        ratio = max(bbox_w, bbox_h) / max(1, min(bbox_w, bbox_h))
+        return ratio <= 1.8
 
     def _resize_strict_matrix(self, strict_matrix: list[list[bool]], config: RenderConfig) -> list[list[bool]]:
         """实现严格模式下的尺寸适配逻辑."""
@@ -135,7 +148,6 @@ class HalfBlockRenderer:
         border = 2
         plan = _build_fit_plan(config, len(strict_matrix), len(strict_matrix))
 
-        # 严格路径用实际可用尺寸，避免 30% 预算把 QR 网格缩成非标准尺寸
         effective_cols = plan.avail_cols
         if config.max_cols is not None:
             effective_cols = min(effective_cols, config.max_cols)
@@ -143,7 +155,6 @@ class HalfBlockRenderer:
             effective_cols = min(effective_cols, config.img_width)
         effective_cols = max(1, effective_cols)
 
-        # 放不下时先缩 border，保护 QR 模块网格完整性
         while border > 0 and (len(strict_matrix) + 2 * border) > effective_cols:
             border -= 1
 
@@ -205,7 +216,7 @@ class HalfBlockRenderer:
         else:
             for i in range(0, len(matrix), 2):
                 row_top = matrix[i]
-                row_bottom = matrix[i + 1] if i + 1 < len(matrix) else [False] * len(row_top)
+                row_bottom = matrix[i + 1]
 
                 line_chars = []
                 for top, bottom in zip(row_top, row_bottom, strict=False):

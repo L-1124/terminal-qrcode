@@ -197,7 +197,7 @@ class TerminalProbe:
                     time.sleep(0.005)
             return res_bytes.decode("ascii", errors="ignore")
 
-        response = ""
+        response_chars: list[str] = []
         started = False
         while True:
             # 计算绝对剩余时间, 阻断慢速响应的累加效应
@@ -216,13 +216,13 @@ class TerminalProbe:
             if not started:
                 if char == "\x1b":
                     started = True
-                    response = char
+                    response_chars = [char]
             else:
-                response += char
+                response_chars.append(char)
             # 常见结束符: c (DA), \ (ST), BEL (\x07)
             if started and char in ("c", "\\", "\x07"):
                 break
-        return response
+        return "".join(response_chars)
 
     def _query_terminal_retry(self, query: str, timeout: float, *, remaining_budget: float | None = None) -> str:
         """发送查询并重试一次以降低脏数据和慢链路导致的偶发误判."""
@@ -233,8 +233,7 @@ class TerminalProbe:
         if first == "":
             return ""
 
-        if first:
-            logger.debug(f"Probe got non-control response, retrying once: {repr(first)}")
+        logger.debug(f"Probe got non-control response, retrying once: {repr(first)}")
 
         retry_timeout = _RETRY_TIMEOUT_MS / 1000.0
         if remaining_budget is not None:

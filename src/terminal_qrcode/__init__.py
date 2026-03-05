@@ -1,6 +1,5 @@
 """终端二维码渲染库."""
 
-import logging
 from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import Any, overload
@@ -22,8 +21,6 @@ except ImportError:
 
 pyzarb: Any | None = _pyzarb
 
-logger = logging.getLogger(__name__)
-
 __version__ = "0.1.0"
 
 
@@ -33,6 +30,32 @@ __all__ = [
     "draw",
     "generate",
 ]
+
+
+def _build_overrides(
+    *,
+    scale: int | None,
+    force_renderer: RendererName | None,
+    timeout: float | None,
+    invert: bool | None,
+    ascii_only: bool | None,
+    fit: bool | None,
+    max_cols: int | None,
+    img_width: int | None,
+    tmux_passthrough: str | None,
+) -> dict[str, object]:
+    """构建渲染覆盖参数字典."""
+    return {
+        "scale": scale,
+        "force_renderer": force_renderer,
+        "timeout": timeout,
+        "invert": invert,
+        "ascii_only": ascii_only,
+        "fit": fit,
+        "max_cols": max_cols,
+        "img_width": img_width,
+        "tmux_passthrough": tmux_passthrough,
+    }
 
 
 class DrawOutput:
@@ -189,17 +212,17 @@ def draw(
     if decode_first:
         payload = _decode_qr_first(payload)
 
-    overrides: dict[str, object] = {
-        "scale": scale,
-        "force_renderer": force_renderer,
-        "timeout": timeout,
-        "invert": invert,
-        "ascii_only": ascii_only,
-        "fit": fit,
-        "max_cols": max_cols,
-        "img_width": img_width,
-        "tmux_passthrough": tmux_passthrough,
-    }
+    overrides = _build_overrides(
+        scale=scale,
+        force_renderer=force_renderer,
+        timeout=timeout,
+        invert=invert,
+        ascii_only=ascii_only,
+        fit=fit,
+        max_cols=max_cols,
+        img_width=img_width,
+        tmux_passthrough=tmux_passthrough,
+    )
     return DrawOutput(core.run_pipeline(payload, overrides=overrides))
 
 
@@ -304,15 +327,15 @@ def generate(
     qr.make(fit=True)
     payload = SimpleImage.from_qr_matrix(qr.get_matrix())
 
-    overrides: dict[str, object] = {
-        "scale": scale,
-        "force_renderer": force_renderer,
-        "timeout": timeout,
-        "invert": invert,
-        "ascii_only": ascii_only,
-        "fit": fit,
-        "max_cols": max_cols,
-        "img_width": img_width,
-        "tmux_passthrough": tmux_passthrough,
-    }
+    overrides = _build_overrides(
+        scale=scale,
+        force_renderer=force_renderer,
+        timeout=timeout,
+        invert=invert,
+        ascii_only=ascii_only,
+        fit=fit,
+        max_cols=max_cols,
+        img_width=img_width,
+        tmux_passthrough=tmux_passthrough,
+    )
     return DrawOutput(core.run_pipeline(payload, overrides=overrides))

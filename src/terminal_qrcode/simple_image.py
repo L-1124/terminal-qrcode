@@ -298,14 +298,5 @@ def _normalize_pixel(mode: PixelMode, value: int | tuple[int, ...]) -> tuple[int
     raise ValueError("Pixel length does not match image mode.")
 
 
-def _to_rgb_tuple(mode: PixelMode, data: bytearray | bytes) -> tuple[int, int, int]:
-    if mode == "L":
-        v = data[0]
-        return (v, v, v)
-    if mode == "RGB":
-        return (data[0], data[1], data[2])
-    return (data[0], data[1], data[2])
-
-
 def _clamp_u8(value: int) -> int:
     return max(0, min(255, int(value)))

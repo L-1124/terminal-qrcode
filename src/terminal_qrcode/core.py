@@ -96,12 +96,6 @@ def _to_simple_image(payload: ImageInput) -> SimpleImage:
     return SimpleImage(mode, (width, height), data)
 
 
-def _normalize_payload(payload: ImageInput, config: RenderConfig) -> list[list[bool]] | SimpleImage:
-    """规范化输入载荷为渲染图像."""
-    _ = config
-    return _to_simple_image(payload)
-
-
 def run_pipeline(
     payload: ImageInput,
     config: RenderConfig | None = None,
@@ -111,7 +105,7 @@ def run_pipeline(
     """执行从输入到渲染输出的完整编排流程."""
     final_config = _merge_config(config, overrides or {})
     _validate_config(final_config)
-    render_payload = _normalize_payload(payload, final_config)
+    render_payload = _to_simple_image(payload)
     capability = _resolve_capability(final_config)
     logger.debug("Selected capability: %s", capability.name)
     renderer = DEFAULT_RENDERER_REGISTRY.get(capability)

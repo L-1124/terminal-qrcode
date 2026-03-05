@@ -25,7 +25,6 @@ _FIT_WIDTH_USAGE = 0.30
 _FIT_HEIGHT_USAGE = 0.60
 _CELL_ASPECT_W_OVER_H = 0.5
 _DEFAULT_IMG_WIDTH = 40
-_HALFBLOCK_MAX_SCALE = 10
 _HALFBLOCK_HEIGHT_USAGE = 0.60
 _DEFAULT_CELL_PX_W = 8
 _DEFAULT_CELL_PX_H = 16
@@ -68,16 +67,11 @@ def _resolve_user_width_cap(config: RenderConfig) -> int | None:
     return max(1, config.img_width)
 
 
-def _resolve_target_cols(config: RenderConfig, *, include_img_width_cap_in_fit: bool = True) -> int:
+def _resolve_target_cols(config: RenderConfig) -> int:
     """解析当前配置下的目标列宽."""
     if config.fit:
         cols, rows = _get_available_cells()
         plan = _build_fit_plan(config, cols, rows)
-        if include_img_width_cap_in_fit:
-            return plan.display_cols
-        user_cap = _resolve_user_width_cap(config)
-        if user_cap is not None:
-            return max(1, min(plan.display_cols, user_cap))
         return plan.display_cols
 
     cols = max(1, config.img_width if config.img_width is not None else _DEFAULT_IMG_WIDTH)

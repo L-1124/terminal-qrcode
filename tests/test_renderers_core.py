@@ -94,6 +94,16 @@ def _render_matrix_to_image(
     return img
 
 
+def _strict_candidate_image(size: int = 120) -> SimpleImage:
+    """构造可通过 quick prior 的近方形候选图像."""
+    img = SimpleImage.new("L", (size, size), color=255)
+    margin = size // 6
+    for y in range(margin, size - margin):
+        for x in range(margin, size - margin):
+            img.putpixel((x, y), 0)
+    return img
+
+
 def test_halfblock_strict_restore_respects_fit_cols():
     """验证严格还原后的网格输出会受 fit 列宽限制."""
     matrix = _build_qr_like_matrix(size=25)
@@ -196,6 +206,39 @@ def test_halfblock_strict_restore_fallback_on_non_qr(monkeypatch):
     output = "".join(renderer.render(img, RenderConfig(img_width=8)))
     first_line = output.splitlines()[0]
     assert len(first_line) <= 8
+
+
+def test_halfblock_quick_prior_skips_strict_when_too_small(monkeypatch):
+    """验证尺寸过小图像会跳过 strict_restore 快速回退."""
+    called = {"strict": 0}
+
+    def _fake_strict(*_args, **_kwargs):
+        called["strict"] += 1
+
+    monkeypatch.setattr(renderers, "strict_restore_qr_matrix", _fake_strict)
+    renderer = HalfBlockRenderer()
+    img = SimpleImage.new("L", (20, 20), color=0)
+    _ = "".join(renderer.render(img, RenderConfig(img_width=8)))
+    assert called["strict"] == 0
+
+
+def test_halfblock_quick_prior_allows_square_candidate(monkeypatch):
+    """验证近方形候选图像会进入 strict_restore 流程."""
+    called = {"strict": 0}
+    matrix = _build_qr_like_matrix(size=25)
+
+    def _fake_strict(*_args, **_kwargs):
+        called["strict"] += 1
+        return matrix
+
+    monkeypatch.setattr(renderers, "strict_restore_qr_matrix", _fake_strict)
+    renderer = HalfBlockRenderer()
+    img = SimpleImage.new("L", (120, 120), color=255)
+    for y in range(20, 100):
+        for x in range(20, 100):
+            img.putpixel((x, y), 0)
+    _ = "".join(renderer.render(img, RenderConfig(fit=True)))
+    assert called["strict"] == 1
 
 
 def test_render_config_img_width():
@@ -373,7 +416,7 @@ def test_halfblock_uses_same_display_budget(monkeypatch):
     monkeypatch.setattr(layout, "get_terminal_size", lambda fallback: os.terminal_size((120, 40)))
     matrix = _build_qr_like_matrix(size=25)
     monkeypatch.setattr(renderers, "strict_restore_qr_matrix", lambda *_args, **_kwargs: matrix)
-    img = SimpleImage.new("L", (10, 10), color=255)
+    img = _strict_candidate_image()
 
     plan = layout._build_fit_plan(RenderConfig(fit=True), 29, 29)
     out = "".join(HalfBlockRenderer().render(img, RenderConfig(fit=True)))
@@ -518,7 +561,7 @@ def test_halfblock_strict_uses_integer_scale(monkeypatch):
     matrix = _build_qr_like_matrix(size=25)
     monkeypatch.setattr(renderers, "strict_restore_qr_matrix", lambda *_args, **_kwargs: matrix)
 
-    img = SimpleImage.new("L", (10, 10), color=255)
+    img = _strict_candidate_image()
     renderer = HalfBlockRenderer()
     output = "".join(renderer.render(img, RenderConfig(fit=True)))
     first_line = output.splitlines()[0]
@@ -531,7 +574,7 @@ def test_halfblock_too_narrow_keeps_current_downscale_behavior(monkeypatch):
     matrix = _build_qr_like_matrix(size=25)
     monkeypatch.setattr(renderers, "strict_restore_qr_matrix", lambda *_args, **_kwargs: matrix)
 
-    img = SimpleImage.new("L", (10, 10), color=255)
+    img = _strict_candidate_image()
     renderer = HalfBlockRenderer()
     output = "".join(renderer.render(img, RenderConfig(fit=True)))
     first_line = output.splitlines()[0]
@@ -544,7 +587,7 @@ def test_halfblock_strict_never_produces_nonstandard_qr_size(monkeypatch):
     matrix = _build_qr_like_matrix(size=21)
     monkeypatch.setattr(renderers, "strict_restore_qr_matrix", lambda *_args, **_kwargs: matrix)
 
-    img = SimpleImage.new("L", (10, 10), color=255)
+    img = _strict_candidate_image()
     renderer = HalfBlockRenderer()
     output = "".join(renderer.render(img, RenderConfig(fit=True)))
     first_line = output.splitlines()[0]
@@ -560,7 +603,7 @@ def test_halfblock_strict_wide_terminal_uses_larger_scale(monkeypatch):
     matrix = _build_qr_like_matrix(size=25)
     monkeypatch.setattr(renderers, "strict_restore_qr_matrix", lambda *_args, **_kwargs: matrix)
 
-    img = SimpleImage.new("L", (10, 10), color=255)
+    img = _strict_candidate_image()
     renderer = HalfBlockRenderer()
     output = "".join(renderer.render(img, RenderConfig(fit=True)))
     first_line = output.splitlines()[0]
@@ -577,7 +620,7 @@ def test_halfblock_strict_reduces_border_before_resize(monkeypatch):
     matrix = _build_qr_like_matrix(size=25)
     monkeypatch.setattr(renderers, "strict_restore_qr_matrix", lambda *_args, **_kwargs: matrix)
 
-    img = SimpleImage.new("L", (10, 10), color=255)
+    img = _strict_candidate_image()
     renderer = HalfBlockRenderer()
     output = "".join(renderer.render(img, RenderConfig(fit=True)))
     first_line = output.splitlines()[0]

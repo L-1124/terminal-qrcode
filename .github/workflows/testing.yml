@@ -35,17 +35,8 @@ jobs:
           enable-cache: true
           cache-dependency-glob: uv.lock
 
-      - name: Cache vcpkg (Windows)
-        if: runner.os == 'Windows'
-        uses: actions/cache@v5
-        with:
-          path: ${{ runner.temp }}/vcpkg
-          key: testing-vcpkg-${{ runner.os }}-${{ hashFiles('.github/scripts/vendor-windows.ps1') }}
-          restore-keys: |
-            testing-vcpkg-${{ runner.os }}-
-
       - name: Sync dependencies
-        run: uv sync --group dev --no-install-project
+        run: uv sync --group lint --no-install-project
 
       - name: Run Ruff Check
         run: uv run --no-project ruff check .
@@ -109,7 +100,7 @@ jobs:
           "CIMAGE_LIBRARY_DIRS=$installed\lib" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
 
       - name: Sync dependencies
-        run: uv sync --group dev
+        run: uv sync --group test --group integration
 
       - name: Run Tests
         run: uv run pytest

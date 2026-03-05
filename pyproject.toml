@@ -19,14 +19,23 @@ pyzarb = [
 ]
 
 [dependency-groups]
-dev = [
+lint = [
   "pre-commit>=4.5.1",
   "pyrefly>=0.55.0",
+  "ruff>=0.1.0",
+]
+test = [
   "pytest>=7.4.0",
+  "setuptools>=82.0.0",
+]
+integration = [
   "pyzbar>=0.1.9",
   "qrcode>=8.2",
-  "ruff>=0.1.0",
-  "setuptools>=82.0.0",
+]
+dev = [
+  { include-group = "lint" },
+  { include-group = "test" },
+  { include-group = "integration" },
 ]
 
 [build-system]
@@ -80,7 +89,10 @@ select = [
 ignore = ["D203", "D212"]
 
 [tool.setuptools]
-include-package-data = true
+include-package-data = false
+
+[tool.setuptools.package-data]
+terminal_qrcode = ["*.pyi"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

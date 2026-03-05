@@ -129,8 +129,6 @@ def main():
             )
         else:
             image_path = args.image_path
-            if image_path is None:
-                parser.error("必须提供 image_path 或 --data/-d")
             if not os.path.isfile(image_path):
                 sys.stderr.write(f"Error: Image file not found at '{image_path}'\n")
                 sys.exit(1)

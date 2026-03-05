@@ -1,14 +1,11 @@
 """图像编解码后端整合模块（纯 C 扩展实现）."""
 
-import logging
 from typing import TYPE_CHECKING
 
 from terminal_qrcode import _cimage
 
 if TYPE_CHECKING:
     from terminal_qrcode._cimage import PixelMode
-
-logger = logging.getLogger(__name__)
 
 __all__ = [
     "PngUnavailableError",

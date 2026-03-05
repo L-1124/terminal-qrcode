@@ -135,7 +135,7 @@ setup(
     ext_modules=[
         Extension(
             "terminal_qrcode._cimage",
-            ["src/terminal_qrcode/_cimage.c"],
+            ["src/native/_cimage.c"],
             libraries=(_windows_static_libraries() if sys.platform == "win32" else _platform_libraries()),
             include_dirs=_include_dirs,
             library_dirs=_library_dirs,
