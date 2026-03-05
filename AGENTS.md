@@ -61,7 +61,7 @@ except ImportError:
 ## Key conventions
 
 - **POSIX 兼容**：`probe.py` 中 `termios`/`tty` 仅 UNIX 可用，Windows 通过 `try/except ImportError` 处理，用 `Any` 类型标注——此为有意设计
-- **图像解码**：PNG/WEBP 优先用 `_cimage`，JPEG 优先用 `ctypes` + libjpeg-turbo，失败回退 `djpeg`
+- **图像解码**：PNG/JPEG/WEBP 通过 `_cimage` 使用静态链接后端，发布 wheel 时会打包所需 lib，不依赖运行时外部 `djpeg`
 - **Tmux 穿透**：渲染器必须检查 `TMUX` 环境变量，需双重转义 `\x1bPtmux;...\x1b\\`
 - **CLI 设计**：无 `[project.scripts]` 入口点，仅通过 `python -m terminal_qrcode` 运行
 

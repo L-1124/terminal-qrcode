@@ -389,7 +389,11 @@ class SixelRenderer:
         footer = "\x1b\\"
 
         body = _sixel_encode_mono(bits, width, height)
-        yield header + body + footer
+        payload_seq = header + body + footer
+        if _should_tmux_wrap(config):
+            yield _tmux_wrap(payload_seq)
+            return
+        yield payload_seq
 
 
 class RendererRegistry(Generic[T]):

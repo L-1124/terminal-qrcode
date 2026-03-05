@@ -147,7 +147,7 @@ def _matrix_to_image(matrix: list[list[bool]], scale: int, mode: Literal["RGB", 
     width = len(matrix[0]) * scale
     height = len(matrix) * scale
 
-    flat_bits = bytes([1 if cell else 0 for row in matrix for cell in row])
+    flat_bits = bytes(1 if cell else 0 for row in matrix for cell in row)
     out = _cimage.matrix_to_image(flat_bits, len(matrix[0]), len(matrix), scale, mode)
     return SimpleImage(mode, (width, height), out)
 

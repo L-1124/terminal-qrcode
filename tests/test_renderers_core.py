@@ -641,11 +641,38 @@ def test_kitty_renderer_tmux_auto_disabled_not_wrapped(mock_allow):
 
 @patch.dict("os.environ", {"TMUX": "/tmp/tmux-1000/default,123,0"}, clear=False)
 @patch("terminal_qrcode.renderers._tmux_allow_passthrough", return_value=False)
+def test_sixel_renderer_tmux_auto_disabled_not_wrapped(mock_allow):
+    """验证 Sixel 在 tmux auto 且未启用 allow-passthrough 时不进行包裹."""
+    config = RenderConfig(tmux_passthrough="auto")
+    image = SimpleImage.new("L", (2, 2), 0)
+    renderer = SixelRenderer()
+
+    output = "".join(renderer.render(image, config))
+
+    assert output.startswith("\x1bP9q")
+    assert "\x1bPtmux;" not in output
+
+
+@patch.dict("os.environ", {"TMUX": "/tmp/tmux-1000/default,123,0"}, clear=False)
+@patch("terminal_qrcode.renderers._tmux_allow_passthrough", return_value=False)
 def test_kitty_renderer_tmux_always_forces_wrap(mock_allow):
     """验证 tmux 穿透策略为 always 时即使未启用 allow-passthrough 也强制包裹."""
     config = RenderConfig(tmux_passthrough="always")
     image = SimpleImage.new("RGB", (2, 2), (0, 0, 0))
     renderer = KittyRenderer()
+
+    output = "".join(renderer.render(image, config))
+
+    assert output.startswith("\x1bPtmux;")
+
+
+@patch.dict("os.environ", {"TMUX": "/tmp/tmux-1000/default,123,0"}, clear=False)
+@patch("terminal_qrcode.renderers._tmux_allow_passthrough", return_value=False)
+def test_sixel_renderer_tmux_always_forces_wrap(mock_allow):
+    """验证 Sixel 在 tmux always 时强制包裹序列."""
+    config = RenderConfig(tmux_passthrough="always")
+    image = SimpleImage.new("L", (2, 2), 0)
+    renderer = SixelRenderer()
 
     output = "".join(renderer.render(image, config))
 
