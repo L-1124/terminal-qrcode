@@ -53,7 +53,7 @@ class WebPDecodeError(RuntimeError):
     """libwebp 解码失败."""
 
 
-def decode_png_with_libpng(png_data: bytes) -> tuple[PixelMode, int, int, bytes]:
+def decode_png_with_libpng(png_data: bytes) -> tuple["PixelMode", int, int, bytes]:
     """通过 C 扩展 + libpng 解码 PNG."""
     try:
         mode, width, height, out = _cimage.decode_png_8bit(png_data)
@@ -64,7 +64,7 @@ def decode_png_with_libpng(png_data: bytes) -> tuple[PixelMode, int, int, bytes]
     return mode, int(width), int(height), bytes(out)
 
 
-def encode_png_with_libpng(data: bytes, mode: PixelMode, width: int, height: int) -> bytes:
+def encode_png_with_libpng(data: bytes, mode: "PixelMode", width: int, height: int) -> bytes:
     """通过 C 扩展 + libpng 编码 PNG."""
     try:
         out = _cimage.encode_png_8bit(data, mode, width, height)

@@ -8,7 +8,7 @@
 ## 📦 安装
 
 ```bash
-uv add terminal-terminal
+uv add terminal-qrcode
 ```
 
 ## ✨ Python API
@@ -16,7 +16,7 @@ uv add terminal-terminal
 ```python
 from terminal_qrcode import draw
 
-a = draw("test.png", force_renderer="halfblock"):
+a = draw("test.png", force_renderer="halfblock")
 print(a)
 ```
 
