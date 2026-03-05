@@ -13,12 +13,17 @@ dynamic = ["version"]
 qr = [
   "qrcode>=8.2",
 ]
+pyzarb = [
+  "pyzbar>=0.1.9",
+  "qrcode>=8.2",
+]
 
 [dependency-groups]
 dev = [
   "pre-commit>=4.5.1",
   "pyrefly>=0.55.0",
   "pytest>=7.4.0",
+  "pyzbar>=0.1.9",
   "qrcode>=8.2",
   "ruff>=0.1.0",
   "setuptools>=82.0.0",

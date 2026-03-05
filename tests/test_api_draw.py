@@ -312,3 +312,82 @@ def test_generate_rejects_inconsistent_matrix_width(monkeypatch):
     monkeypatch.setattr(terminal_qrcode, "qrcode", fake_qrcode)
     with pytest.raises(ValueError, match="inconsistent width"):
         generate("hello")
+
+
+@patch("terminal_qrcode.core.run_pipeline")
+def test_draw_decode_first_rebuilds_qr_payload(mock_run_pipeline, monkeypatch):
+    """验证 draw(decode_first=True) 会先解码再重建二维码图像."""
+
+    class _FakeDecodeItem:
+        type = "QRCODE"
+        data = b"decoded"
+
+    class _FakePyzarb:
+        @staticmethod
+        def decode(_raw):
+            return [_FakeDecodeItem()]
+
+    class _FakeQRCode:
+        def __init__(self, **_kwargs):
+            pass
+
+        def add_data(self, _data):
+            pass
+
+        def make(self, fit: bool = True):
+            _ = fit
+
+        def get_matrix(self):
+            return [[True, False], [False, True]]
+
+    def _gen():
+        yield "ok"
+
+    mock_run_pipeline.return_value = _gen()
+    fake_qrcode = SimpleNamespace(
+        QRCode=_FakeQRCode,
+        constants=SimpleNamespace(
+            ERROR_CORRECT_L=1,
+            ERROR_CORRECT_M=2,
+            ERROR_CORRECT_Q=3,
+            ERROR_CORRECT_H=4,
+        ),
+    )
+    monkeypatch.setattr(terminal_qrcode, "qrcode", fake_qrcode)
+    monkeypatch.setattr(terminal_qrcode, "pyzarb", _FakePyzarb())
+
+    source = SimpleImage.new("L", (3, 3), color=255)
+    _ = list(draw(source, decode_first=True, force_renderer="halfblock"))
+
+    args, _kwargs = mock_run_pipeline.call_args
+    payload = args[0]
+    assert isinstance(payload, SimpleImage)
+    assert (payload.width, payload.height) == (2, 2)
+
+
+@patch("terminal_qrcode.core.run_pipeline")
+def test_draw_decode_first_fallback_when_not_decodable(mock_run_pipeline, monkeypatch):
+    """验证 draw(decode_first=True) 在无法解码时回退原图渲染."""
+
+    class _FakePyzarb:
+        @staticmethod
+        def decode(_raw):
+            return []
+
+    def _gen():
+        yield "ok"
+
+    mock_run_pipeline.return_value = _gen()
+    monkeypatch.setattr(terminal_qrcode, "pyzarb", _FakePyzarb())
+    source = SimpleImage.new("L", (3, 3), color=255)
+    _ = list(draw(source, decode_first=True, force_renderer="halfblock"))
+    args, _kwargs = mock_run_pipeline.call_args
+    assert args[0] is source
+
+
+def test_draw_decode_first_requires_pyzarb_dependency(monkeypatch):
+    """验证 draw(decode_first=True) 缺少 pyzarb 依赖会报错."""
+    monkeypatch.setattr(terminal_qrcode, "pyzarb", None)
+    source = SimpleImage.new("L", (1, 1), color=0)
+    with pytest.raises(RuntimeError, match="\\[pyzarb\\]"):
+        list(draw(source, decode_first=True, force_renderer="halfblock"))

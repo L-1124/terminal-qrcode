@@ -19,6 +19,12 @@ uv add terminal-qrcode
 uv add "terminal-qrcode[qr]"
 ```
 
+启用“先解码再重建”渲染增强（`pyzbar` + `qrcode`）：
+
+```bash
+uv add "terminal-qrcode[pyzarb]"
+```
+
 ## ✨ Python API
 
 ```python
@@ -29,6 +35,9 @@ print(a)
 
 b = generate("https://github.com/L-1124/terminal-qrcode", force_renderer="halfblock")
 print(b)
+
+c = draw("blurred-qr.png", force_renderer="halfblock", decode_first=True)
+print(c)
 ```
 
 ## 🖼️ 支持的输入格式
