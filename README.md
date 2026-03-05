@@ -8,7 +8,7 @@
 ## 📦 安装
 
 ```bash
-uv add qrcode-terminal
+uv add terminal-terminal
 ```
 
 ## ✨ Python API
@@ -16,9 +16,8 @@ uv add qrcode-terminal
 ```python
 from terminal_qrcode import draw
 
-for chunk in draw("test.png", force_renderer="halfblock"):
-    print(chunk, end="")
-print()
+a = draw("test.png", force_renderer="halfblock"):
+print(a)
 ```
 
 ## 🖼️ 支持的输入格式
