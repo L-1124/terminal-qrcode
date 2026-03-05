@@ -32,31 +32,13 @@ jobs:
           - runner: windows-latest
             cibw_archs: "AMD64"
             artifact_name: "windows-amd64"
-    env:
-      CIBW_ARCHS: ${{ matrix.cibw_archs }}
-      CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=15.0
-      CIBW_BEFORE_ALL_LINUX: bash .github/scripts/vendor-linux.sh
-      CIBW_BEFORE_ALL_MACOS: bash .github/scripts/vendor-macos.sh
-      CIBW_BEFORE_ALL_WINDOWS: powershell -ExecutionPolicy Bypass -File .github/scripts/vendor-windows.ps1
-
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Set up uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-          cache-dependency-glob: uv.lock
+        uses: actions/checkout@v6
 
       - name: Cache cibuildwheel (Linux)
         if: runner.os == 'Linux'
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/.cache/cibuildwheel
           key: release-cibw-${{ runner.os }}-${{ matrix.cibw_archs }}-${{ hashFiles('pyproject.toml', '.github/workflows/release.yml', '.github/scripts/vendor-linux.sh') }}
@@ -65,7 +47,7 @@ jobs:
 
       - name: Cache cibuildwheel (macOS)
         if: runner.os == 'macOS'
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~/Library/Caches/cibuildwheel
           key: release-cibw-${{ runner.os }}-${{ matrix.cibw_archs }}-${{ hashFiles('pyproject.toml', '.github/workflows/release.yml', '.github/scripts/vendor-macos.sh') }}
@@ -74,7 +56,7 @@ jobs:
 
       - name: Cache cibuildwheel (Windows)
         if: runner.os == 'Windows'
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ~\AppData\Local\pypa\cibuildwheel\Cache
           key: release-cibw-${{ runner.os }}-${{ matrix.cibw_archs }}-${{ hashFiles('pyproject.toml', '.github/workflows/release.yml', '.github/scripts/vendor-windows.ps1') }}
@@ -83,7 +65,7 @@ jobs:
 
       - name: Cache vcpkg (Windows)
         if: runner.os == 'Windows'
-        uses: actions/cache@v4
+        uses: actions/cache@v5
         with:
           path: ${{ runner.temp }}/vcpkg
           key: release-vcpkg-${{ runner.os }}-${{ hashFiles('.github/scripts/vendor-windows.ps1') }}
@@ -104,8 +86,16 @@ jobs:
           echo "CIMAGE_INCLUDE_DIRS=$VCPKG_INSTALLED/include" >> "$GITHUB_ENV"
           echo "CIMAGE_LIBRARY_DIRS=$VCPKG_INSTALLED/lib" >> "$GITHUB_ENV"
 
-      - name: Build wheels with cibuildwheel
-        run: uvx --from cibuildwheel==2.23.3 cibuildwheel --output-dir dist
+      - name: Build wheels
+        uses: pypa/cibuildwheel@v3.3.1
+        env:
+          CIBW_ARCHS: ${{ matrix.cibw_archs }}
+          CIBW_ENVIRONMENT_MACOS: MACOSX_DEPLOYMENT_TARGET=15.0
+          CIBW_BEFORE_ALL_LINUX: bash .github/scripts/vendor-linux.sh
+          CIBW_BEFORE_ALL_MACOS: bash .github/scripts/vendor-macos.sh
+          CIBW_BEFORE_ALL_WINDOWS: powershell -ExecutionPolicy Bypass -File .github/scripts/vendor-windows.ps1
+        with:
+          output-dir: wheelhouse
 
       - name: Validate C extension in wheel
         shell: python
@@ -120,9 +110,9 @@ jobs:
           from pathlib import Path
 
           runner_os = os.environ["RUNNER_OS"]
-          wheels = sorted(glob.glob("dist/*.whl"))
+          wheels = sorted(glob.glob("wheelhouse/*.whl"))
           if not wheels:
-              raise SystemExit("No wheel file found in dist/")
+              raise SystemExit("No wheel file found in wheelhouse/")
           interp_tag = f"cp{sys.version_info.major}{sys.version_info.minor}"
           supported = [
               wheel for wheel in wheels if re.search(rf"-{interp_tag}-{interp_tag}-", Path(wheel).name)
@@ -163,10 +153,10 @@ jobs:
               print(f"C extension smoke test passed for {wheel_path}")
 
       - name: Upload wheel artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: wheels-${{ matrix.artifact_name }}
-          path: dist/*.whl
+          path: wheelhouse/*.whl
           if-no-files-found: error
 
   build_sdist:
@@ -175,15 +165,15 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
 
       - name: Set up Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
-          python-version: "3.12"
+          python-version: "3.14"
 
       - name: Set up uv
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
         with:
           enable-cache: true
           cache-dependency-glob: uv.lock
@@ -200,7 +190,7 @@ jobs:
         run: uvx --from twine twine check dist/*
 
       - name: Upload sdist artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sdist
           path: dist/*.tar.gz
@@ -213,16 +203,21 @@ jobs:
       - build_wheels
       - build_sdist
     runs-on: ubuntu-latest
+    environment:
+      name: pypi
     permissions:
       contents: write
       id-token: write
+      models: read
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
       - name: Download all artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: dist
 
@@ -234,17 +229,84 @@ jobs:
           ls -al release-dist
 
       - name: Verify distributions
-        uses: astral-sh/setup-uv@v5
+        uses: astral-sh/setup-uv@v7
 
       - name: Twine check
         run: uvx --from twine twine check release-dist/*
+
+      - name: Build AI prompt for release notes
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          current_tag="${GITHUB_REF_NAME}"
+          release_date="$(date -u +%F)"
+          prev_tag="$(git tag --sort=-v:refname | grep '^v' | grep -vx "${current_tag}" | head -n 1 || true)"
+
+          if [ -n "${prev_tag}" ]; then
+            range="${prev_tag}..${current_tag}"
+            compare_link="https://github.com/${GITHUB_REPOSITORY}/compare/${prev_tag}...${current_tag}"
+          else
+            range="${current_tag}"
+            compare_link="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${current_tag}"
+          fi
+
+          {
+            cat .github/release-notes-prompt.md
+            echo
+            echo "----"
+            echo "version: ${current_tag#v}"
+            echo "release_date: ${release_date}"
+            echo "highlights:"
+            echo "- 本次版本包含以下提交摘要，请按主题归纳后输出。"
+            echo "changes_raw:"
+            git log --no-merges --pretty='- %s (%h)' "${range}" | head -n 200 || true
+            echo "breaking_changes:"
+            echo "- 未显式提供。若提交中无明确信息，请省略该章节。"
+            echo "deprecations:"
+            echo "- 未显式提供。"
+            echo "fixes:"
+            echo "- 请从提交中提取 bugfix。"
+            echo "perf_notes:"
+            echo "- 请从提交中提取性能相关变更；无数据不要量化。"
+            echo "api_cli_changes:"
+            echo "- 请关注 python API 与 python -m terminal_qrcode CLI 参数/行为变化。"
+            echo "compatibility_notes:"
+            echo "- 请关注 Kitty/iTerm2/WezTerm/Sixel/Halfblock、Windows/POSIX、tmux 行为。"
+            echo "install_cmd: uv add terminal-qrcode"
+            echo "thanks:"
+            echo "- 感谢所有贡献者。"
+            echo "compare_link: ${compare_link}"
+          } > "${RUNNER_TEMP}/release-note.prompt.txt"
+
+      - name: Validate GitHub MCP token
+        if: ${{ secrets.MCP_PAT == '' }}
+        shell: bash
+        run: |
+          echo "::error::Missing secret MCP_PAT. GitHub MCP requires a Personal Access Token (PAT)."
+          exit 1
+
+      - name: Generate release notes with AI Inference
+        id: ai_release_notes
+        uses: actions/ai-inference@v1
+        with:
+          prompt-file: ${{ runner.temp }}/release-note.prompt.txt
+          model: openai/gpt-4o
+          max-tokens: 1800
+          enable-github-mcp: true
+          github-mcp-token: ${{ secrets.MCP_PAT }}
+
+      - name: Save generated release notes
+        shell: bash
+        run: |
+          cp "${{ steps.ai_release_notes.outputs.response-file }}" release-notes.md
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           draft: true
-          files: release-dist/*
-          generate_release_notes: true
+          generate_release_notes: false
+          body_path: release-notes.md
 
       - name: Publish to PyPI (Trusted Publisher)
         uses: pypa/gh-action-pypi-publish@release/v1
