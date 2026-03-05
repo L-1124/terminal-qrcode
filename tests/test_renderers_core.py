@@ -175,6 +175,15 @@ def test_halfblock_strict_restore_3x3_majority_is_noise_robust():
     assert restored == matrix
 
 
+def test_halfblock_strict_restore_supports_single_pixel_module_qr():
+    """验证严格还原可处理单像素模块的纯净二维码图像."""
+    matrix = _build_qr_like_matrix(size=25)
+    image = _render_matrix_to_image(matrix, module=1, quiet=4)
+    restored = qr_restore.strict_restore_qr_matrix(image, RenderConfig())
+    assert restored is not None
+    assert restored == matrix
+
+
 def test_halfblock_auto_polarity_corrects_inverted_input():
     """验证 invert=None 时自动极性判定可修正黑白反转输入."""
     matrix = _build_qr_like_matrix(size=25)

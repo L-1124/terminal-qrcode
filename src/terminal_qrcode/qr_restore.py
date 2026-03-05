@@ -34,6 +34,21 @@ def _nearest_qr_size(n_est: float) -> int | None:
     return best
 
 
+def _infer_size_from_bbox(bbox: tuple[int, int, int, int]) -> int | None:
+    """在模块尺寸估计失败时，尝试直接由黑色包围盒推断标准 QR 尺寸."""
+    left, top, right, bottom = bbox
+    bbox_w = right - left
+    bbox_h = bottom - top
+    if bbox_w <= 0 or bbox_h <= 0 or bbox_w != bbox_h:
+        return None
+    size = int(bbox_w)
+    if size < _MIN_QR_SIZE or size > _MAX_QR_SIZE:
+        return None
+    if (size - _MIN_QR_SIZE) % _QR_STEP != 0:
+        return None
+    return size
+
+
 def _sample_matrix_3x3(
     bits: bytes, width: int, height: int, bbox: tuple[int, int, int, int], size: int
 ) -> list[list[bool]]:
@@ -96,15 +111,19 @@ def strict_restore_qr_matrix(image: SimpleImage, config: RenderConfig) -> list[l
 
     module_size = _estimate_module_size(bits, luma.width, luma.height, bbox)
     if module_size is None:
-        return None
-
-    left, top, right, bottom = bbox
-    est_w = (right - left) / module_size
-    est_h = (bottom - top) / module_size
-    size_est = (est_w + est_h) / 2.0
-    size = _nearest_qr_size(size_est)
-    if size is None:
-        return None
+        size = _infer_size_from_bbox(bbox)
+        if size is None:
+            return None
+    else:
+        left, top, right, bottom = bbox
+        est_w = (right - left) / module_size
+        est_h = (bottom - top) / module_size
+        size_est = (est_w + est_h) / 2.0
+        size = _nearest_qr_size(size_est)
+        if size is None:
+            size = _infer_size_from_bbox(bbox)
+            if size is None:
+                return None
 
     matrix = _sample_matrix_3x3(bits, luma.width, luma.height, bbox, size)
     matrix = _auto_polarity(matrix, config.invert)
