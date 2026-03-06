@@ -1,9 +1,12 @@
 """CLI 入口参数解析测试."""
 
+import json
+
 import pytest
 
 from terminal_qrcode import DrawOutput
 from terminal_qrcode.__main__ import main
+from terminal_qrcode.contracts import TerminalCapabilities, TerminalCapability, TerminalColorLevel
 
 
 def test_main_accepts_positional_image_path(monkeypatch, tmp_path, capsys):
@@ -68,3 +71,27 @@ def test_main_forwards_repair_option(monkeypatch, tmp_path):
     main()
     assert seen["renderer"] == "auto"
     assert seen["repair"] == "strict"
+
+
+def test_main_detect_outputs_terminal_parameters(monkeypatch, capsys):
+    """验证 --detect 输出终端探测结果 JSON 且无需图片路径."""
+    monkeypatch.setattr("sys.argv", ["terminal_qrcode", "--detect"])
+    monkeypatch.setattr(
+        "terminal_qrcode.__main__.TerminalProbe.capabilities",
+        lambda self: TerminalCapabilities(
+            capability=TerminalCapability.KITTY,
+            color_level=TerminalColorLevel.TRUECOLOR,
+        ),
+    )
+    monkeypatch.setattr("sys.stdin.isatty", lambda: True)
+    monkeypatch.setattr("sys.stdout.isatty", lambda: True)
+
+    main()
+    out = capsys.readouterr().out
+    payload = json.loads(out)
+    assert payload["capability"] == "kitty"
+    assert payload["color_level"] == "truecolor"
+    assert "term" in payload
+    assert "term_program" in payload
+    assert payload["stdin_isatty"] is True
+    assert payload["stdout_isatty"] is True

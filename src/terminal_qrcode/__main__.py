@@ -1,11 +1,13 @@
 """命令行接口模块."""
 
 import argparse
+import json
 import logging
 import os
 import sys
 
 from . import draw
+from .probe import TerminalProbe
 
 
 def main():
@@ -15,6 +17,11 @@ def main():
         "image_path",
         nargs="?",
         help="图片路径",
+    )
+    parser.add_argument(
+        "--detect",
+        action="store_true",
+        help="仅输出当前终端探测结果与关键环境参数",
     )
     parser.add_argument(
         "-r",
@@ -78,13 +85,29 @@ def main():
         except Exception:  # noqa: BLE001
             pass
 
-    if not args.image_path:
+    if not args.detect and not args.image_path:
         parser.error("必须提供 image_path")
 
     try:
+        if args.detect:
+            probe = TerminalProbe()
+            capabilities = probe.capabilities()
+            payload = {
+                "capability": capabilities.capability.name.lower(),
+                "color_level": capabilities.color_level.name.lower(),
+                "term": os.environ.get("TERM", ""),
+                "term_program": os.environ.get("TERM_PROGRAM", ""),
+                "tmux": bool(os.environ.get("TMUX", "")),
+                "stdin_isatty": sys.stdin.isatty(),
+                "stdout_isatty": sys.stdout.isatty(),
+                "platform": sys.platform,
+            }
+            print(json.dumps(payload, ensure_ascii=False), flush=True)  # noqa: T201
+            return
+
         image_path = args.image_path
         if not os.path.isfile(image_path):
-            sys.stderr.write(f"Error: Image file not found at '{image_path}'\n")
+            print(f"Error: Image file not found at '{image_path}'", file=sys.stderr)  # noqa: T201
             sys.exit(1)
         output = draw(
             image_path,
@@ -96,15 +119,13 @@ def main():
             img_width=args.img_width,
         )
 
-        sys.stdout.write(str(output))
-        sys.stdout.flush()
+        print(str(output), end="", flush=True)  # noqa: T201
     except BrokenPipeError:
-        # 针对 Unix 下的 | head -n 1 等场景，优雅退出
         devnull = os.open(os.devnull, os.O_WRONLY)
         os.dup2(devnull, sys.stdout.fileno())
         sys.exit(1)
     except Exception as e:
-        sys.stderr.write(f"Error: Failed to parse image. {str(e)}\n")
+        print(f"Error: Failed to parse image. {str(e)}", file=sys.stderr)  # noqa: T201
         sys.exit(1)
 
 

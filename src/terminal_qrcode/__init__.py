@@ -184,7 +184,7 @@ def draw(
     Examples:
         直接输出完整结果:
 
-        >>> from  import draw
+        >>> from terminal_qrcode import draw
         >>> print(draw("qrcode.png"))
 
         以分片流式处理输出:
