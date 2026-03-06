@@ -8,11 +8,8 @@ from terminal_qrcode import _cimage
 from terminal_qrcode.codecs import (
     PngDecodeError,
     PngEncodeError,
-    PngUnavailableError,
     TurboJpegDecodeError,
-    TurboJpegUnavailableError,
     WebPDecodeError,
-    WebPUnavailableError,
     decode_jpeg_rgb,
     decode_png_with_libpng,
     decode_webp_rgba,
@@ -110,28 +107,24 @@ class SimpleImage:
         try:
             mode, width, height, out = decode_png_with_libpng(data)
             return cls(mode, (width, height), out)
-        except (PngUnavailableError, PngDecodeError) as exc:
-            raise ValueError("PNG decode requires C backend (libpng).") from exc
+        except PngDecodeError as exc:
+            raise ValueError("PNG decode failed.") from exc
 
     @classmethod
     def _decode_jpeg_pipeline(cls, jpeg_data: bytes) -> "SimpleImage":
         try:
             width, height, rgb = decode_jpeg_rgb(jpeg_data)
             return cls(cast(PixelMode, "RGB"), (width, height), rgb)
-        except TurboJpegUnavailableError as exc:
-            raise ValueError("JPEG decode requires C backend (turbojpeg).") from exc
         except TurboJpegDecodeError as exc:
-            raise ValueError("Failed to decode JPEG with C backend.") from exc
+            raise ValueError("JPEG decode failed.") from exc
 
     @classmethod
     def _decode_webp_pipeline(cls, webp_data: bytes) -> "SimpleImage":
         try:
             width, height, rgba = decode_webp_rgba(webp_data)
             return cls(cast(PixelMode, "RGBA"), (width, height), rgba)
-        except WebPUnavailableError as exc:
-            raise ValueError("WEBP decode requires C backend (libwebp).") from exc
         except WebPDecodeError as exc:
-            raise ValueError("Failed to decode WEBP with C backend.") from exc
+            raise ValueError("WEBP decode failed.") from exc
 
     def copy(self) -> "SimpleImage":
         """复制图像."""
@@ -240,8 +233,8 @@ class SimpleImage:
         """编码为 PNG."""
         try:
             return encode_png_with_libpng(bytes(self._data), self.mode, self.width, self.height)
-        except (PngUnavailableError, PngEncodeError) as exc:
-            raise ValueError("PNG encode requires C backend (libpng).") from exc
+        except PngEncodeError as exc:
+            raise ValueError("PNG encode failed.") from exc
 
 
 def _detect_image_type(data: bytes) -> Literal["png", "jpeg", "webp"] | None:

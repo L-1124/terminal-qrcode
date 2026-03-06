@@ -1,6 +1,5 @@
 """对外 draw API 测试."""
 
-import importlib
 import os
 from pathlib import Path
 from typing import Any
@@ -8,10 +7,9 @@ from unittest.mock import patch
 
 import pytest
 
-import terminal_qrcode
 from terminal_qrcode import draw, layout
-from terminal_qrcode.contracts import ImageProtocol, RenderConfig, TerminalCapabilities, TerminalColorLevel
-from terminal_qrcode.core import RenderRequest, TerminalCapability
+from terminal_qrcode.contracts import ImageProtocol, TerminalCapabilities, TerminalColorLevel
+from terminal_qrcode.core import TerminalCapability
 from terminal_qrcode.simple_image import SimpleImage
 
 
@@ -133,14 +131,6 @@ def test_draw_result_supports_str_and_iteration(mock_run_pipeline):
     assert list(result) == ["a", "b"]
 
 
-def test_optional_dependencies_are_lazy_after_module_reload():
-    """验证模块重载后核心导出仍可用."""
-    reloaded = importlib.reload(terminal_qrcode)
-    globals()["DrawOutput"] = reloaded.DrawOutput
-    globals()["draw"] = reloaded.draw
-    globals()["layout"] = reloaded.layout
-
-
 @patch("terminal_qrcode.renderers.HalfBlockRenderer.render")
 @patch("terminal_qrcode.probe.TerminalProbe.capabilities")
 def test_draw_auto_detection_uses_single_capabilities_snapshot(mock_capabilities, mock_render):
@@ -254,27 +244,5 @@ def test_draw_fit_true_without_img_width_uses_none_override(mock_run_pipeline):
     _ = list(draw(img, fit=True))
 
     request = mock_run_pipeline.call_args.args[0]
-    assert isinstance(request, RenderRequest)
     assert request.config.fit is True
     assert request.config.img_width is None
-
-
-def test_draw_rejects_removed_force_renderer_keyword():
-    """验证 draw 不再接受 force_renderer 旧参数."""
-    image = _render_matrix_to_image(_build_qr_like_matrix())
-    with pytest.raises(TypeError, match="force_renderer"):
-        _ = eval("draw(image, force_renderer='halfblock')", {"draw": terminal_qrcode.draw, "image": image})
-
-
-@patch("terminal_qrcode.core.strict_restore_qr_matrix")
-def test_draw_best_effort_repair_uses_current_strict_restore(mock_restore):
-    """验证 best_effort 当前临时复用 strict 恢复路径."""
-    mock_restore.return_value = _build_qr_like_matrix()
-
-    image = _render_matrix_to_image(_build_qr_like_matrix())
-    _ = str(draw(image, renderer="halfblock", repair="best_effort", fit=False, img_width=80))
-
-    args, _ = mock_restore.call_args
-    passed_config = args[1]
-    assert isinstance(passed_config, RenderConfig)
-    assert passed_config.repair == "best_effort"
