@@ -15,7 +15,7 @@ dynamic = ["version"]
 qr = [
   "qrcode>=8.2",
 ]
-pyzarb = [
+pyzbar = [
   "pyzbar>=0.1.9",
   "qrcode>=8.2",
 ]
@@ -24,10 +24,10 @@ pyzarb = [
 lint = [
   "pre-commit>=4.5.1",
   "pyrefly>=0.55.0",
-  "ruff>=0.1.0",
+  "ruff>=0.15.5",
 ]
 test = [
-  "pytest>=7.4.0",
+  "pytest>=9.0.2",
   "setuptools>=82.0.0",
 ]
 integration = [

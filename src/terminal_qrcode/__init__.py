@@ -1,25 +1,19 @@
 """终端二维码渲染库."""
 
+import importlib
 from collections.abc import Iterable, Iterator
 from pathlib import Path
-from typing import Any, overload
+from types import ModuleType
+from typing import overload
 
 from terminal_qrcode import core
 from terminal_qrcode.contracts import ColorLevelName, HalfBlockMode, ImageInput, Matrix, RendererName
 from terminal_qrcode.simple_image import SimpleImage
 
-try:
-    import qrcode as _qrcode
-except ImportError:
-    _qrcode = None
+_UNSET = object()
 
-qrcode: Any | None = _qrcode
-try:
-    from pyzbar import pyzbar as _pyzarb
-except ImportError:
-    _pyzarb = None
-
-pyzarb: Any | None = _pyzarb
+_qrcode: ModuleType | None | object = _UNSET
+_pyzbar: ModuleType | None | object = _UNSET
 
 __version__ = "0.1.1"
 
@@ -31,6 +25,32 @@ __all__ = [
     "draw",
     "generate",
 ]
+
+
+def _load_qrcode() -> ModuleType | None:
+    """按需加载 qrcode 可选依赖."""
+    global _qrcode
+    if _qrcode is _UNSET:
+        try:
+            _qrcode = importlib.import_module("qrcode")
+        except ImportError:
+            _qrcode = None
+    if isinstance(_qrcode, ModuleType):
+        return _qrcode
+    return None
+
+
+def _load_pyzbar() -> ModuleType | None:
+    """按需加载 pyzbar 可选依赖."""
+    global _pyzbar
+    if _pyzbar is _UNSET:
+        try:
+            _pyzbar = importlib.import_module("pyzbar.pyzbar")
+        except ImportError:
+            _pyzbar = None
+    if isinstance(_pyzbar, ModuleType):
+        return _pyzbar
+    return None
 
 
 def _build_overrides(
@@ -222,9 +242,10 @@ def draw(
 
 def decode_and_redraw(payload: ImageInput | str | Path | bytes | bytearray) -> Matrix:
     """先尝试解码二维码内容，再重建二维码矩阵."""
-    if qrcode is None or pyzarb is None:
-        raise RuntimeError("decode_and_redraw requires optional dependency group [pyzarb].")
-    qrcode_mod = qrcode
+    qrcode_mod = _load_qrcode()
+    pyzbar_mod = _load_pyzbar()
+    if qrcode_mod is None or pyzbar_mod is None:
+        raise RuntimeError("decode_and_redraw requires optional dependency group [pyzbar].")
 
     image_input = payload
     if isinstance(image_input, (str, Path)):
@@ -233,7 +254,7 @@ def decode_and_redraw(payload: ImageInput | str | Path | bytes | bytearray) -> M
         image_input = SimpleImage.from_bytes(image_input)
     image = image_input if isinstance(image_input, SimpleImage) else core._to_simple_image(image_input)
     luma = image if image.mode == "L" else image.convert("L")
-    decoded = pyzarb.decode((bytes(luma._data), luma.width, luma.height))
+    decoded = pyzbar_mod.decode((bytes(luma._data), luma.width, luma.height))
     if not decoded:
         raise ValueError("Failed to decode QR payload from image.")
 
@@ -295,22 +316,23 @@ def generate(
         ValueError: 参数非法时抛出.
 
     """
-    if qrcode is None:
+    qrcode_mod = _load_qrcode()
+    if qrcode_mod is None:
         raise RuntimeError("qrcode dependency is required. Please install terminal-qrcode[qr].")
     if border < 0:
         raise ValueError("border must be >= 0")
 
     ec_map = {
-        "L": qrcode.constants.ERROR_CORRECT_L,
-        "M": qrcode.constants.ERROR_CORRECT_M,
-        "Q": qrcode.constants.ERROR_CORRECT_Q,
-        "H": qrcode.constants.ERROR_CORRECT_H,
+        "L": qrcode_mod.constants.ERROR_CORRECT_L,
+        "M": qrcode_mod.constants.ERROR_CORRECT_M,
+        "Q": qrcode_mod.constants.ERROR_CORRECT_Q,
+        "H": qrcode_mod.constants.ERROR_CORRECT_H,
     }
     level = ec_level.upper()
     if level not in ec_map:
         raise ValueError("ec_level must be one of: L, M, Q, H")
 
-    qr = qrcode.QRCode(
+    qr = qrcode_mod.QRCode(
         version=None,
         error_correction=ec_map[level],
         box_size=1,
