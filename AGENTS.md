@@ -67,10 +67,11 @@ except ImportError:
 
 ## PR instructions
 
-- 标题格式：`<type>(<scope>): <subject>`，如 `feat(renderers): add wezterm support`
+- 标题格式：`<type>(<scope>): <subject>`，如 `feat(renderers): 添加 WezTerm 渲染器支持`
 - 提交前必须运行：`uv run ruff check . && uv run ruff format . && uv run pyrefly check && uv run pytest`
 - 新代码必须补充或更新测试
-- 提交消息使用 Conventional Commits（类型：`feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `ci`）
+- 提交消息使用 Conventional Commits（类型：`feat`, `fix`, `refactor`, `docs`, `test`, `chore`, `ci`）例如:
+  - `feat(renderers): 添加 WezTerm 渲染器支持`
 
 ## Common tasks
 

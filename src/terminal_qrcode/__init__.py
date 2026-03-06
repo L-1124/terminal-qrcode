@@ -7,7 +7,14 @@ from types import ModuleType
 from typing import overload
 
 from terminal_qrcode import core
-from terminal_qrcode.contracts import ColorLevelName, HalfBlockMode, ImageInput, Matrix, RendererName
+from terminal_qrcode.contracts import (
+    ColorLevelName,
+    HalfBlockMode,
+    ImageInput,
+    Matrix,
+    RendererOption,
+    RepairMode,
+)
 from terminal_qrcode.simple_image import SimpleImage
 
 _UNSET = object()
@@ -55,7 +62,8 @@ def _load_pyzbar() -> ModuleType | None:
 
 def _build_overrides(
     *,
-    force_renderer: RendererName | None,
+    renderer: RendererOption | None,
+    repair: RepairMode | None,
     invert: bool | None,
     color_level: ColorLevelName | None,
     fit: bool | None,
@@ -67,7 +75,8 @@ def _build_overrides(
 ) -> dict[str, object]:
     """构建渲染覆盖参数字典."""
     return {
-        "force_renderer": force_renderer,
+        "renderer": renderer,
+        "repair": repair,
         "invert": invert,
         "color_level": color_level,
         "fit": fit,
@@ -128,7 +137,8 @@ class DrawOutput:
 def draw(
     payload: ImageInput,
     *,
-    force_renderer: RendererName | None = None,
+    renderer: RendererOption = "auto",
+    repair: RepairMode = "off",
     invert: bool | None = None,
     color_level: ColorLevelName | None = None,
     fit: bool | None = None,
@@ -144,7 +154,8 @@ def draw(
 def draw(
     payload: str | Path,
     *,
-    force_renderer: RendererName | None = None,
+    renderer: RendererOption = "auto",
+    repair: RepairMode = "off",
     invert: bool | None = None,
     color_level: ColorLevelName | None = None,
     fit: bool | None = None,
@@ -160,7 +171,8 @@ def draw(
 def draw(
     payload: bytes | bytearray,
     *,
-    force_renderer: RendererName | None = None,
+    renderer: RendererOption = "auto",
+    repair: RepairMode = "off",
     invert: bool | None = None,
     color_level: ColorLevelName | None = None,
     fit: bool | None = None,
@@ -175,7 +187,8 @@ def draw(
 def draw(
     payload: ImageInput | str | Path | bytes | bytearray,
     *,
-    force_renderer: RendererName | None = None,
+    renderer: RendererOption = "auto",
+    repair: RepairMode = "off",
     invert: bool | None = None,
     color_level: ColorLevelName | None = None,
     fit: bool | None = None,
@@ -190,7 +203,8 @@ def draw(
 
     Args:
         payload: 图像对象或本地图片路径（str/Path）.
-        force_renderer: 强制指定渲染器(如 "kitty", "iterm2").
+        renderer: 渲染器类型（auto/kitty/iterm2/wezterm/sixel/halfblock）.
+        repair: 修复策略（off/best_effort/strict）.
         invert: 是否反转颜色.
         color_level: 文本颜色等级(auto/none/ansi16/ansi256/truecolor).
         fit: 是否按终端列宽自动收束.
@@ -211,23 +225,30 @@ def draw(
 
         以分片流式处理输出:
 
-        >>> out = draw("qrcode.png", force_renderer="halfblock")
+        >>> out = draw("qrcode.png", renderer="halfblock")
         >>> for chunk in out:
         ...     _ = chunk
 
         从内存字节输入:
 
         >>> png_bytes = b"..."
-        >>> text = str(draw(png_bytes, force_renderer="halfblock"))
+        >>> text = str(draw(png_bytes, renderer="halfblock"))
 
     """
     if isinstance(payload, (str, Path)):
         payload = SimpleImage.open(payload)
+        source = "path"
     elif isinstance(payload, (bytes, bytearray)):
         payload = SimpleImage.from_bytes(payload)
+        source = "bytes"
+    elif isinstance(payload, list):
+        source = "matrix"
+    else:
+        source = "image"
 
     overrides = _build_overrides(
-        force_renderer=force_renderer,
+        renderer=renderer,
+        repair=repair,
         invert=invert,
         color_level=color_level,
         fit=fit,
@@ -237,7 +258,8 @@ def draw(
         tmux_passthrough=tmux_passthrough,
         border=border,
     )
-    return DrawOutput(core.run_pipeline(payload, overrides=overrides))
+    request = core._normalize_request(payload, source=source, overrides=overrides)
+    return DrawOutput(core.run_pipeline(request))
 
 
 def decode_and_redraw(payload: ImageInput | str | Path | bytes | bytearray) -> Matrix:
@@ -250,32 +272,17 @@ def decode_and_redraw(payload: ImageInput | str | Path | bytes | bytearray) -> M
     image_input = payload
     if isinstance(image_input, (str, Path)):
         image_input = SimpleImage.open(image_input)
+        source = "path"
     elif isinstance(image_input, (bytes, bytearray)):
         image_input = SimpleImage.from_bytes(image_input)
-    image = image_input if isinstance(image_input, SimpleImage) else core._to_simple_image(image_input)
-    luma = image if image.mode == "L" else image.convert("L")
-    decoded = pyzbar_mod.decode((bytes(luma._data), luma.width, luma.height))
-    if not decoded:
-        raise ValueError("Failed to decode QR payload from image.")
+        source = "bytes"
+    elif isinstance(image_input, list):
+        source = "matrix"
+    else:
+        source = "image"
 
-    result = None
-    for item in decoded:
-        kind = str(getattr(item, "type", "")).upper()
-        if kind in {"", "QRCODE"}:
-            result = item
-            break
-    if result is None:
-        raise ValueError("Decoded symbols do not contain a QRCode payload.")
-
-    qr = qrcode_mod.QRCode(
-        version=None,
-        error_correction=qrcode_mod.constants.ERROR_CORRECT_M,
-        box_size=1,
-        border=4,
-    )
-    qr.add_data(getattr(result, "data", b""))
-    qr.make(fit=True)
-    return [list(row) for row in qr.get_matrix()]
+    request = core._normalize_request(image_input, source=source)
+    return core.decode_request_to_matrix(request, qrcode_module=qrcode_mod, pyzbar_module=pyzbar_mod)
 
 
 def generate(
@@ -283,7 +290,8 @@ def generate(
     *,
     ec_level: str = "M",
     border: int = 2,
-    force_renderer: RendererName | None = None,
+    renderer: RendererOption = "auto",
+    repair: RepairMode = "off",
     invert: bool | None = None,
     color_level: ColorLevelName | None = None,
     fit: bool | None = None,
@@ -299,7 +307,8 @@ def generate(
         data: 二维码内容.
         ec_level: 容错级别（L/M/Q/H）.
         border: 二维码边距（模块数）.
-        force_renderer: 强制指定渲染器(如 "kitty", "iterm2").
+        renderer: 渲染器类型（auto/kitty/iterm2/wezterm/sixel/halfblock）.
+        repair: 修复策略（off/best_effort/strict）.
         invert: 是否反转颜色.
         color_level: 文本颜色等级(auto/none/ansi16/ansi256/truecolor).
         fit: 是否按终端列宽自动收束.
@@ -343,7 +352,8 @@ def generate(
     payload = [list(row) for row in qr.get_matrix()]
 
     overrides = _build_overrides(
-        force_renderer=force_renderer,
+        renderer=renderer,
+        repair=repair,
         invert=invert,
         color_level=color_level,
         fit=fit,
@@ -352,4 +362,5 @@ def generate(
         halfblock_mode=halfblock_mode,
         tmux_passthrough=tmux_passthrough,
     )
-    return DrawOutput(core.run_pipeline(payload, overrides=overrides))
+    request = core._normalize_request(payload, source="generated_matrix", overrides=overrides)
+    return DrawOutput(core.run_pipeline(request))

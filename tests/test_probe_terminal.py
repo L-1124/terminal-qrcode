@@ -135,7 +135,7 @@ def test_draw_short_circuit(mock_probe):
     _add_finder(0, 0)
     _add_finder(size - 7, 0)
     _add_finder(0, size - 7)
-    result = "".join(draw(matrix, force_renderer="halfblock"))
+    result = "".join(draw(matrix, renderer="halfblock"))
     assert not mock_probe.called
     assert any(c in result for c in ("▄", "▀", "█", " "))
 

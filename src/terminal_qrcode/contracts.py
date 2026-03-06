@@ -7,9 +7,10 @@ from typing import Literal, Protocol, TypeAlias, runtime_checkable
 
 from terminal_qrcode.simple_image import SimpleImage
 
-RendererName = Literal["kitty", "iterm2", "wezterm", "sixel", "halfblock"]
+RendererOption = Literal["auto", "kitty", "iterm2", "wezterm", "sixel", "halfblock"]
 HalfBlockMode = Literal["precision", "area"]
 ColorLevelName = Literal["auto", "none", "ansi16", "ansi256", "truecolor"]
+RepairMode = Literal["off", "best_effort", "strict"]
 Matrix: TypeAlias = list[list[bool]]
 
 
@@ -18,7 +19,8 @@ class RenderConfig:
     """渲染配置项."""
 
     scale: int = 8
-    force_renderer: RendererName | None = None
+    renderer: RendererOption = "auto"
+    repair: RepairMode = "off"
     timeout: float = 0.1
     invert: bool | None = None
     color_level: ColorLevelName = "auto"
@@ -76,6 +78,15 @@ class ImageProtocol(Protocol):
 
 
 ImageInput = SimpleImage | ImageProtocol | Matrix
+
+
+@dataclass(frozen=True)
+class RenderRequest:
+    """统一渲染请求."""
+
+    payload: ImageInput
+    config: RenderConfig
+    source: str
 
 
 @runtime_checkable

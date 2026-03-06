@@ -77,7 +77,8 @@ def test_render_config_defaults():
     """验证渲染配置核心默认值."""
     config = RenderConfig()
     assert config.scale == 8
-    assert config.force_renderer is None
+    assert config.renderer == "auto"
+    assert config.repair == "off"
     assert config.invert is None
     assert config.fit is True
     assert config.max_cols is None

@@ -68,7 +68,25 @@ def test_main_accepts_data_option(monkeypatch, capsys):
     out = capsys.readouterr().out
     assert "ok-data" in out
     assert seen["data"] == "hello"
-    assert seen["force_renderer"] == "halfblock"
+    assert seen["renderer"] == "halfblock"
+    assert seen["repair"] == "off"
+
+
+def test_main_forwards_repair_option(monkeypatch, tmp_path):
+    """验证 CLI 会透传 repair 选项."""
+    path = tmp_path / "x.png"
+    path.write_bytes(b"dummy")
+    seen: dict[str, object] = {}
+
+    def _fake_draw(*_args, **kwargs):
+        seen.update(kwargs)
+        return DrawOutput(["ok"])
+
+    monkeypatch.setattr("sys.argv", ["terminal_qrcode", str(path), "--repair", "strict"])
+    monkeypatch.setattr("terminal_qrcode.__main__.draw", _fake_draw)
+    main()
+    assert seen["renderer"] == "auto"
+    assert seen["repair"] == "strict"
 
 
 def test_main_rejects_when_image_and_data_are_both_set(monkeypatch):

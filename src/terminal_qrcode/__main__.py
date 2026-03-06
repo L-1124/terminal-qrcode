@@ -24,8 +24,15 @@ def main():
     parser.add_argument(
         "-r",
         "--renderer",
-        choices=["kitty", "iterm2", "wezterm", "sixel", "halfblock"],
-        help="强制指定渲染器类型",
+        choices=["auto", "kitty", "iterm2", "wezterm", "sixel", "halfblock"],
+        default="auto",
+        help="指定渲染器类型；auto 表示按终端能力自动选择",
+    )
+    parser.add_argument(
+        "--repair",
+        choices=["off", "best_effort", "strict"],
+        default="off",
+        help="指定二维码修复策略；best_effort 当前临时复用 strict 路径",
     )
     parser.add_argument(
         "--invert",
@@ -88,7 +95,8 @@ def main():
             text = sys.stdin.read() if args.data == "-" else args.data
             output = generate(
                 text,
-                force_renderer=args.renderer,
+                renderer=args.renderer,
+                repair=args.repair,
                 invert=args.invert,
                 fit=args.fit,
                 max_cols=args.max_cols,
@@ -101,7 +109,8 @@ def main():
                 sys.exit(1)
             output = draw(
                 image_path,
-                force_renderer=args.renderer,
+                renderer=args.renderer,
+                repair=args.repair,
                 invert=args.invert,
                 fit=args.fit,
                 max_cols=args.max_cols,

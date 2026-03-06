@@ -2,6 +2,7 @@
 
 import dataclasses
 from collections.abc import Generator
+from types import ModuleType
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
 from terminal_qrcode.contracts import (
@@ -11,6 +12,7 @@ from terminal_qrcode.contracts import (
     Matrix,
     RenderConfig,
     Renderer,
+    RenderRequest,
     TerminalCapabilities,
     TerminalCapability,
     TerminalColorLevel,
@@ -43,15 +45,15 @@ def _merge_config(config: RenderConfig | None, overrides: dict[str, object]) -> 
 
 def _resolve_capability(config: RenderConfig) -> TerminalCapability:
     """解析最终渲染能力."""
-    if config.force_renderer:
-        force_str = config.force_renderer.lower()
-        if force_str == "kitty":
+    if config.renderer != "auto":
+        renderer = config.renderer.lower()
+        if renderer == "kitty":
             return TerminalCapability.KITTY
-        if force_str == "wezterm":
+        if renderer == "wezterm":
             return TerminalCapability.WEZTERM
-        if force_str == "sixel":
+        if renderer == "sixel":
             return TerminalCapability.SIXEL
-        if force_str == "iterm2":
+        if renderer == "iterm2":
             return TerminalCapability.ITERM2
         return TerminalCapability.FALLBACK
 
@@ -62,28 +64,9 @@ def _resolve_capability(config: RenderConfig) -> TerminalCapability:
     return probe.probe(timeout=config.timeout)
 
 
-def _resolve_color_level(config: RenderConfig) -> ColorLevelName:
-    """解析最终文本颜色等级（auto 时走终端探测）."""
-    if config.color_level != "auto":
-        return config.color_level
-
-    # 延迟导入，避免与 probe.py 形成模块初始化循环。
-    from terminal_qrcode.probe import TerminalProbe
-
-    probe = TerminalProbe()
-    level = probe.probe_color(timeout=config.timeout)
-    if level is TerminalColorLevel.TRUECOLOR:
-        return "truecolor"
-    if level is TerminalColorLevel.ANSI256:
-        return "ansi256"
-    if level is TerminalColorLevel.ANSI16:
-        return "ansi16"
-    return "none"
-
-
 def _resolve_terminal_capabilities(config: RenderConfig) -> TerminalCapabilities:
     """解析最终终端能力快照."""
-    if config.force_renderer and config.color_level != "auto":
+    if config.renderer != "auto" and config.color_level != "auto":
         return TerminalCapabilities(
             capability=_resolve_capability(config),
             color_level=TerminalColorLevel[config.color_level.upper()],
@@ -92,7 +75,7 @@ def _resolve_terminal_capabilities(config: RenderConfig) -> TerminalCapabilities
     from terminal_qrcode.probe import TerminalProbe
 
     probe = TerminalProbe()
-    if config.force_renderer:
+    if config.renderer != "auto":
         return TerminalCapabilities(
             capability=_resolve_capability(config),
             color_level=probe.probe_color(timeout=config.timeout),
@@ -111,6 +94,10 @@ def _validate_config(config: RenderConfig) -> None:
         raise ValueError("img_width must be greater than 0.")
     if config.max_cols is not None and config.max_cols <= 0:
         raise ValueError("max_cols must be greater than 0 when provided.")
+    if config.renderer not in {"auto", "kitty", "iterm2", "wezterm", "sixel", "halfblock"}:
+        raise ValueError("renderer must be one of: auto, kitty, iterm2, wezterm, sixel, halfblock.")
+    if config.repair not in {"off", "best_effort", "strict"}:
+        raise ValueError("repair must be one of: off, best_effort, strict.")
     if config.color_level not in {"auto", "none", "ansi16", "ansi256", "truecolor"}:
         raise ValueError("color_level must be one of: auto, none, ansi16, ansi256, truecolor.")
     if config.border < 0:
@@ -171,33 +158,50 @@ def _to_render_matrix(payload: ImageInput, config: RenderConfig) -> Matrix:
         return [list(row) for row in payload]
 
     image = _to_simple_image(payload)
-    matrix = strict_restore_qr_matrix(image, config)
+    matrix = _restore_qr_matrix(image, config)
     if matrix is None:
         raise ValueError("Failed to decode QR matrix from image. Input must be a valid machine-generated QR code.")
     return _pad_border(matrix, config.border)
 
 
-def run_pipeline(
+def _restore_qr_matrix(image: SimpleImage, config: RenderConfig) -> Matrix | None:
+    """根据 repair 策略恢复二维码矩阵."""
+    repair = config.repair
+    if repair == "off":
+        return strict_restore_qr_matrix(image, config)
+    if repair == "best_effort":
+        # 当前版本仅预留 best_effort 语义，暂与 strict 共用严格恢复路径。
+        return strict_restore_qr_matrix(image, config)
+    return strict_restore_qr_matrix(image, config)
+
+
+def _coerce_color_level(level: TerminalColorLevel) -> ColorLevelName:
+    """将探测颜色等级转换为配置字面量."""
+    if level is TerminalColorLevel.TRUECOLOR:
+        return "truecolor"
+    if level is TerminalColorLevel.ANSI256:
+        return "ansi256"
+    if level is TerminalColorLevel.ANSI16:
+        return "ansi16"
+    return "none"
+
+
+def _normalize_request(
     payload: ImageInput,
-    config: RenderConfig | None = None,
     *,
+    source: str,
+    config: RenderConfig | None = None,
     overrides: dict[str, object] | None = None,
-) -> Generator[str, None, None]:
-    """执行从输入到渲染输出的完整编排流程."""
+) -> RenderRequest:
+    """构建统一渲染请求."""
     final_config = _merge_config(config, overrides or {})
-    _validate_config(final_config)
-    terminal_capabilities = _resolve_terminal_capabilities(final_config)
-    capability = terminal_capabilities.capability
-    color_level = terminal_capabilities.color_level
-    if color_level is TerminalColorLevel.TRUECOLOR:
-        final_color_level = "truecolor"
-    elif color_level is TerminalColorLevel.ANSI256:
-        final_color_level = "ansi256"
-    elif color_level is TerminalColorLevel.ANSI16:
-        final_color_level = "ansi16"
-    else:
-        final_color_level = "none"
-    final_config = dataclasses.replace(final_config, color_level=final_color_level)
+    return RenderRequest(payload=payload, config=final_config, source=source)
+
+
+def _resolve_render_payload(request: RenderRequest, capability: TerminalCapability) -> Matrix | SimpleImage:
+    """根据请求和终端能力解析最终渲染载荷."""
+    payload = request.payload
+    config = request.config
     if capability in {
         TerminalCapability.KITTY,
         TerminalCapability.ITERM2,
@@ -205,11 +209,56 @@ def run_pipeline(
         TerminalCapability.SIXEL,
     } and not isinstance(payload, list):
         image_payload = _to_simple_image(payload)
-        if strict_restore_qr_matrix(image_payload, final_config) is None:
+        if _restore_qr_matrix(image_payload, config) is None:
             raise ValueError("Failed to decode QR matrix from image. Input must be a valid machine-generated QR code.")
-        render_payload: Matrix | SimpleImage = image_payload
-    else:
-        render_payload = _to_render_matrix(payload, final_config)
+        return image_payload
+    return _to_render_matrix(payload, config)
+
+
+def decode_request_to_matrix(
+    request: RenderRequest,
+    *,
+    qrcode_module: ModuleType,
+    pyzbar_module: ModuleType,
+) -> Matrix:
+    """先解码二维码内容，再重建二维码矩阵."""
+    payload = request.payload
+    image = payload if isinstance(payload, SimpleImage) else _to_simple_image(payload)
+    luma = image if image.mode == "L" else image.convert("L")
+    decoded = pyzbar_module.decode((bytes(luma._data), luma.width, luma.height))
+    if not decoded:
+        raise ValueError("Failed to decode QR payload from image.")
+
+    result = None
+    for item in decoded:
+        kind = str(getattr(item, "type", "")).upper()
+        if kind in {"", "QRCODE"}:
+            result = item
+            break
+    if result is None:
+        raise ValueError("Decoded symbols do not contain a QRCode payload.")
+
+    qr = qrcode_module.QRCode(
+        version=None,
+        error_correction=qrcode_module.constants.ERROR_CORRECT_M,
+        box_size=1,
+        border=4,
+    )
+    qr.add_data(getattr(result, "data", b""))
+    qr.make(fit=True)
+    return [list(row) for row in qr.get_matrix()]
+
+
+def run_pipeline(request: RenderRequest) -> Generator[str, None, None]:
+    """执行从输入到渲染输出的完整编排流程."""
+    final_config = request.config
+    _validate_config(final_config)
+    terminal_capabilities = _resolve_terminal_capabilities(final_config)
+    capability = terminal_capabilities.capability
+    final_color_level = _coerce_color_level(terminal_capabilities.color_level)
+    final_config = dataclasses.replace(final_config, color_level=final_color_level)
+    request = dataclasses.replace(request, config=final_config)
+    render_payload = _resolve_render_payload(request, capability)
     renderer = DEFAULT_RENDERER_REGISTRY.get(capability)
     yield from renderer.render(render_payload, final_config)
 
