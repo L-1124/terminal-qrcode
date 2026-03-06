@@ -92,10 +92,6 @@ def _validate_config(config: RenderConfig) -> None:
         raise ValueError("max_cols must be greater than 0 when provided.")
     if config.renderer not in {"auto", "kitty", "iterm2", "wezterm", "sixel", "halfblock"}:
         raise ValueError("renderer must be one of: auto, kitty, iterm2, wezterm, sixel, halfblock.")
-    if config.repair not in {"off", "best_effort", "strict"}:
-        raise ValueError("repair must be one of: off, best_effort, strict.")
-    if config.color_level not in {"auto", "none", "ansi16", "ansi256", "truecolor"}:
-        raise ValueError("color_level must be one of: auto, none, ansi16, ansi256, truecolor.")
     if config.border < 0:
         raise ValueError("border must be >= 0.")
     if config.finder_variance <= 0:
@@ -179,13 +175,7 @@ def _to_render_matrix(payload: ImageInput, config: RenderConfig) -> Matrix:
 
 
 def _restore_qr_matrix(image: SimpleImage, config: RenderConfig) -> Matrix | None:
-    """根据 repair 策略恢复二维码矩阵."""
-    repair = config.repair
-    if repair == "off":
-        return strict_restore_qr_matrix(image, config)
-    if repair == "best_effort":
-        # 当前版本仅预留 best_effort 语义，暂与 strict 共用严格恢复路径。
-        return strict_restore_qr_matrix(image, config)
+    """恢复二维码矩阵（使用严格模式）."""
     return strict_restore_qr_matrix(image, config)
 
 

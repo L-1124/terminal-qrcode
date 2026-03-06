@@ -89,3 +89,7 @@ TMUX="session" uv run pytest tests/test_renderers_core.py -v
 - ❌ `class Test...` 风格 — 改用 `def test_...`
 - ❌ `from __future__ import ...` — 3.10 无需
 - ❌ 测试文件嵌套 — 平铺在 `tests/` 下
+
+## Must Follow
+
+- 以"皇上启奏:" 为每个回复的开头

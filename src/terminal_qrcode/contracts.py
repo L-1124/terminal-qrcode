@@ -22,7 +22,7 @@ class RenderConfig:
 
     scale: int = 8
     renderer: RendererOption = "auto"
-    repair: RepairMode = "off"
+    repair: RepairMode = "strict"
     timeout: float = 0.1
     invert: bool | None = None
     color_level: ColorLevelName = "auto"

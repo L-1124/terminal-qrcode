@@ -31,12 +31,6 @@ def main():
         help="指定渲染器类型；auto 表示按终端能力自动选择",
     )
     parser.add_argument(
-        "--repair",
-        choices=["off", "best_effort", "strict"],
-        default="off",
-        help="指定二维码修复策略；best_effort 当前临时复用 strict 路径",
-    )
-    parser.add_argument(
         "--invert",
         action="store_true",
         help="反转亮/暗像素点(由于不同终端颜色主题差异, 此选项有助于获得正确视觉效果)",
@@ -112,7 +106,6 @@ def main():
         output = draw(
             image_path,
             renderer=args.renderer,
-            repair=args.repair,
             invert=args.invert,
             fit=args.fit,
             max_cols=args.max_cols,

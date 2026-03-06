@@ -78,7 +78,7 @@ def test_render_config_defaults():
     config = RenderConfig()
     assert config.scale == 8
     assert config.renderer == "auto"
-    assert config.repair == "off"
+    assert config.repair == "strict"
     assert config.invert is None
     assert config.fit is True
     assert config.max_cols is None

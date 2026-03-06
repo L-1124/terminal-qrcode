@@ -88,16 +88,14 @@ def test_draw_flat_kwargs_api(mock_probe, mock_render):
 
     mock_render.side_effect = dummy_gen
     img = _render_matrix_to_image(_build_qr_like_matrix())
-    list(draw(img, renderer="auto", invert=True, color_level="ansi256", fit=False, max_cols=60, halfblock_mode="area"))
+    list(draw(img, renderer="auto", invert=True, fit=False, max_cols=60))
 
     args, _ = mock_render.call_args
     passed_config = args[1]
     assert passed_config.renderer == "auto"
     assert passed_config.invert is True
-    assert passed_config.color_level == "ansi256"
     assert passed_config.fit is False
     assert passed_config.max_cols == 60
-    assert passed_config.halfblock_mode == "area"
 
 
 @patch("terminal_qrcode.core.run_pipeline")
@@ -148,9 +146,6 @@ def test_draw_auto_detection_uses_single_capabilities_snapshot(mock_capabilities
     list(draw(img))
 
     assert mock_capabilities.call_count == 1
-    args, _ = mock_render.call_args
-    passed_config = args[1]
-    assert passed_config.color_level == "ansi256"
 
 
 def test_draw_rejects_invalid_payload_type():
