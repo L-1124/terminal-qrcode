@@ -162,7 +162,7 @@ def _resize_image_to_cols(
 
 
 def _resize_matrix_to_cols(matrix: list[list[bool]], target_cols: int) -> list[list[bool]]:
-    """按目标列宽等比收束布尔矩阵（最近邻）."""
+    """按目标列宽等比收束布尔矩阵（中心点最近邻）."""
     if not matrix or not matrix[0]:
         return matrix
 
@@ -176,11 +176,11 @@ def _resize_matrix_to_cols(matrix: list[list[bool]], target_cols: int) -> list[l
     out: list[list[bool]] = []
 
     for y in range(dst_h):
-        src_y = min((y * src_h) // dst_h, src_h - 1)
+        src_y = min(((2 * y + 1) * src_h) // (2 * dst_h), src_h - 1)
         row: list[bool] = []
         src_row = matrix[src_y]
         for x in range(dst_w):
-            src_x = min((x * src_w) // dst_w, src_w - 1)
+            src_x = min(((2 * x + 1) * src_w) // (2 * dst_w), src_w - 1)
             row.append(src_row[src_x])
         out.append(row)
 

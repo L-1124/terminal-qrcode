@@ -1,6 +1,5 @@
 """轻量级图像模块."""
 
-import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal, TypeAlias, cast
@@ -36,8 +35,6 @@ _MODES: dict[PixelMode, _ModeInfo] = {
     "RGB": _ModeInfo(channels=3),
     "RGBA": _ModeInfo(channels=4),
 }
-
-logger = logging.getLogger(__name__)
 
 
 class SimpleImage:
@@ -112,36 +109,28 @@ class SimpleImage:
     def _decode_png_pipeline(cls, data: bytes) -> "SimpleImage":
         try:
             mode, width, height, out = decode_png_with_libpng(data)
-            logger.debug("SimpleImage PNG decode: using C backend.")
             return cls(mode, (width, height), out)
         except (PngUnavailableError, PngDecodeError) as exc:
-            logger.debug("SimpleImage PNG decode: C backend unavailable/failed. err=%r", exc)
             raise ValueError("PNG decode requires C backend (libpng).") from exc
 
     @classmethod
     def _decode_jpeg_pipeline(cls, jpeg_data: bytes) -> "SimpleImage":
         try:
             width, height, rgb = decode_jpeg_rgb(jpeg_data)
-            logger.debug("SimpleImage JPEG decode: using C backend.")
             return cls(cast(PixelMode, "RGB"), (width, height), rgb)
         except TurboJpegUnavailableError as exc:
-            logger.debug("SimpleImage JPEG decode: C backend unavailable. err=%r", exc)
             raise ValueError("JPEG decode requires C backend (turbojpeg).") from exc
         except TurboJpegDecodeError as exc:
-            logger.debug("SimpleImage JPEG decode: C backend failed. err=%r", exc)
             raise ValueError("Failed to decode JPEG with C backend.") from exc
 
     @classmethod
     def _decode_webp_pipeline(cls, webp_data: bytes) -> "SimpleImage":
         try:
             width, height, rgba = decode_webp_rgba(webp_data)
-            logger.debug("SimpleImage WEBP decode: using C backend.")
             return cls(cast(PixelMode, "RGBA"), (width, height), rgba)
         except WebPUnavailableError as exc:
-            logger.debug("SimpleImage WEBP decode: C backend unavailable. err=%r", exc)
             raise ValueError("WEBP decode requires C backend (libwebp).") from exc
         except WebPDecodeError as exc:
-            logger.debug("SimpleImage WEBP decode: C backend failed. err=%r", exc)
             raise ValueError("Failed to decode WEBP with C backend.") from exc
 
     def copy(self) -> "SimpleImage":
@@ -250,9 +239,7 @@ class SimpleImage:
     def to_png_bytes(self) -> bytes:
         """编码为 PNG."""
         try:
-            out = encode_png_with_libpng(bytes(self._data), self.mode, self.width, self.height)
-            logger.debug("SimpleImage PNG encode: using C backend.")
-            return out
+            return encode_png_with_libpng(bytes(self._data), self.mode, self.width, self.height)
         except (PngUnavailableError, PngEncodeError) as exc:
             raise ValueError("PNG encode requires C backend (libpng).") from exc
 

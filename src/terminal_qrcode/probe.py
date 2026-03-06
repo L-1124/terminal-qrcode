@@ -85,13 +85,7 @@ class TerminalProbe:
         if not feature_string:
             return None
         has_file, has_sixel = self._parse_term_features(feature_string)
-        cap = self._capability_from_feature_flags(has_file, has_sixel)
-        logger.debug(
-            "Feature probe (env): has_F=%s has_Sx=%s source=term_features_env",
-            has_file,
-            has_sixel,
-        )
-        return cap
+        return self._capability_from_feature_flags(has_file, has_sixel)
 
     def _query_capabilities(self, timeout: float, *, remaining_budget: float | None = None) -> str:
         """发送 iTerm2 Feature Reporting Capabilities 查询."""
@@ -108,13 +102,7 @@ class TerminalProbe:
         if not match:
             return None
         has_file, has_sixel = self._parse_term_features(match.group(1))
-        cap = self._capability_from_feature_flags(has_file, has_sixel)
-        logger.debug(
-            "Feature probe (query): has_F=%s has_Sx=%s source=capabilities_query",
-            has_file,
-            has_sixel,
-        )
-        return cap
+        return self._capability_from_feature_flags(has_file, has_sixel)
 
     @contextlib.contextmanager
     def _raw_mode(self) -> Generator[None, None, None]:
@@ -242,8 +230,6 @@ class TerminalProbe:
         if first == "":
             return ""
 
-        logger.debug(f"Probe got non-control response, retrying once: {repr(first)}")
-
         retry_timeout = _RETRY_TIMEOUT_MS / 1000.0
         if remaining_budget is not None:
             retry_timeout = min(retry_timeout, max(0.0, remaining_budget))
@@ -356,11 +342,6 @@ class TerminalProbe:
         key = self._color_cache_key()
         cache = self._color_cache
         if cache is not None and cache.key == key:
-            logger.debug(
-                "Selected color level via probe_source=cache cached_source=%s cached_elapsed_ms=%.2f",
-                cache.probe_source,
-                cache.elapsed_ms,
-            )
             return cache.level
 
         start = time.monotonic()
@@ -368,12 +349,7 @@ class TerminalProbe:
         def _finalize(level: TerminalColorLevel, source: str) -> TerminalColorLevel:
             elapsed_ms = (time.monotonic() - start) * 1000.0
             self._color_cache = _ColorProbeCache(key, level, source, elapsed_ms)
-            logger.debug(
-                "Selected color level via probe_source=%s level=%s elapsed_ms=%.2f",
-                source,
-                level.name.lower(),
-                elapsed_ms,
-            )
+            logger.debug("color: %s (source=%s, %.1fms)", level.name, source, elapsed_ms)
             return level
 
         if os.environ.get("NO_COLOR", "").strip():
@@ -422,53 +398,30 @@ class TerminalProbe:
         key = self._cache_key()
         cache = self._cache
         if cache is not None and cache.key == key:
-            logger.debug(
-                "Selected capability via probe_source=cache cached_source=%s cached_elapsed_ms=%.2f",
-                cache.probe_source,
-                cache.elapsed_ms,
-            )
             return cache.capability
 
         start = time.monotonic()
 
+        def _finalize(cap: TerminalCapability, source: str) -> TerminalCapability:
+            elapsed_ms = (time.monotonic() - start) * 1000.0
+            self._cache = _ProbeCache(key, cap, source, elapsed_ms)
+            logger.debug("probe: %s (source=%s, %.1fms)", cap.name, source, elapsed_ms)
+            return cap
+
         cap_from_env = self._probe_term_features_env()
         if cap_from_env is not None:
-            logger.debug("Selected capability via probe_source=term_features_env")
-            elapsed_ms = (time.monotonic() - start) * 1000.0
-            self._cache = _ProbeCache(key, cap_from_env, "term_features_env", elapsed_ms)
-            return cap_from_env
+            return _finalize(cap_from_env, "term_features_env")
 
         if "KITTY_WINDOW_ID" in os.environ:
-            logger.debug("Selected capability via probe_source=kitty_env")
-            elapsed_ms = (time.monotonic() - start) * 1000.0
-            self._cache = _ProbeCache(key, TerminalCapability.KITTY, "kitty_env", elapsed_ms)
-            return TerminalCapability.KITTY
+            return _finalize(TerminalCapability.KITTY, "kitty_env")
 
         if self._can_use_wezterm_heuristic():
-            term_program = os.environ.get("TERM_PROGRAM", "")
-            logger.debug(
-                "Selected capability via probe_source=wezterm_heuristic stdout_tty=%s tmux=%s term_program=%r",
-                sys.stdout.isatty(),
-                "TMUX" in os.environ,
-                term_program,
-            )
-            elapsed_ms = (time.monotonic() - start) * 1000.0
-            self._cache = _ProbeCache(
-                key,
-                TerminalCapability.ITERM2,
-                "wezterm_heuristic",
-                elapsed_ms,
-            )
-            return TerminalCapability.ITERM2
+            return _finalize(TerminalCapability.ITERM2, "wezterm_heuristic")
 
         if not self._supports_interactive_probe():
-            logger.debug("No interactive TTY, using FALLBACK (probe_source=fallback)")
-            elapsed_ms = (time.monotonic() - start) * 1000.0
-            self._cache = _ProbeCache(key, TerminalCapability.FALLBACK, "fallback", elapsed_ms)
-            return TerminalCapability.FALLBACK
+            return _finalize(TerminalCapability.FALLBACK, "fallback")
 
         budget = min(timeout, self._budget_seconds())
-        logger.debug("Entering TTY interactive probe (budget=%.3fs)", budget)
         with self._raw_mode():
 
             def _remaining() -> float:
@@ -480,12 +433,8 @@ class TerminalProbe:
                 kitty_timeout = min(remain, _STEP_TIMEOUT_KITTY_MS / 1000.0)
                 kitty_query = "\x1b_Gi=31,a=q,s=1,v=1,t=d,f=24;AAAA\x1b\\"
                 res = self._query_terminal_retry(kitty_query, kitty_timeout, remaining_budget=_remaining())
-                logger.debug("Kitty query response: %r", res)
                 if "i=31;OK" in res:
-                    logger.debug("Selected capability via probe_source=kitty_query")
-                    elapsed_ms = (time.monotonic() - start) * 1000.0
-                    self._cache = _ProbeCache(key, TerminalCapability.KITTY, "kitty_query", elapsed_ms)
-                    return TerminalCapability.KITTY
+                    return _finalize(TerminalCapability.KITTY, "kitty_query")
 
             # Level 1.5: upgrade with remaining budget
             remain = _remaining()
@@ -493,25 +442,15 @@ class TerminalProbe:
                 cap_timeout = min(remain, _STEP_TIMEOUT_CAP_MS / 1000.0)
                 cap_from_query = self._probe_term_features_query(cap_timeout, remaining_budget=_remaining())
                 if cap_from_query is not None:
-                    logger.debug("Selected capability via probe_source=capabilities_query")
-                    elapsed_ms = (time.monotonic() - start) * 1000.0
-                    self._cache = _ProbeCache(key, cap_from_query, "capabilities_query", elapsed_ms)
-                    return cap_from_query
+                    return _finalize(cap_from_query, "capabilities_query")
 
             remain = _remaining()
             if remain > 0:
                 da1_timeout = min(remain, _STEP_TIMEOUT_DA1_MS / 1000.0)
                 da1_query = "\x1b[c"
                 res_da1 = self._query_terminal_retry(da1_query, da1_timeout, remaining_budget=_remaining())
-                logger.debug("DA1 query response: %r", res_da1)
                 if self._is_sixel_da1(res_da1):
-                    logger.debug("Selected capability via probe_source=da1")
-                    elapsed_ms = (time.monotonic() - start) * 1000.0
-                    self._cache = _ProbeCache(key, TerminalCapability.SIXEL, "da1", elapsed_ms)
-                    return TerminalCapability.SIXEL
+                    return _finalize(TerminalCapability.SIXEL, "da1")
 
         source = "tmux_conservative_fallback" if "TMUX" in os.environ else "fallback"
-        logger.debug("No capability matched, using FALLBACK (probe_source=%s)", source)
-        elapsed_ms = (time.monotonic() - start) * 1000.0
-        self._cache = _ProbeCache(key, TerminalCapability.FALLBACK, source, elapsed_ms)
-        return TerminalCapability.FALLBACK
+        return _finalize(TerminalCapability.FALLBACK, source)
