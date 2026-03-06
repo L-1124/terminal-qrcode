@@ -51,6 +51,14 @@ class TerminalColorLevel(Enum):
     TRUECOLOR = auto()
 
 
+@dataclass(frozen=True)
+class TerminalCapabilities:
+    """终端能力快照."""
+
+    capability: TerminalCapability
+    color_level: TerminalColorLevel
+
+
 @runtime_checkable
 class ImageProtocol(Protocol):
     """外部图像协议（兼容 PIL.Image.Image 等结构化对象）."""

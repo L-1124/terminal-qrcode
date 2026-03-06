@@ -10,7 +10,7 @@ import pytest
 
 import terminal_qrcode
 from terminal_qrcode import DrawOutput, decode_and_redraw, draw, generate, layout
-from terminal_qrcode.contracts import ImageProtocol
+from terminal_qrcode.contracts import ImageProtocol, TerminalCapabilities, TerminalColorLevel
 from terminal_qrcode.core import TerminalCapability
 from terminal_qrcode.simple_image import SimpleImage
 
@@ -130,6 +130,28 @@ def test_draw_result_supports_str_and_iteration(mock_run_pipeline):
 
     assert str(result) == "ab"
     assert list(result) == ["a", "b"]
+
+
+@patch("terminal_qrcode.renderers.HalfBlockRenderer.render")
+@patch("terminal_qrcode.probe.TerminalProbe.capabilities")
+def test_draw_auto_detection_uses_single_capabilities_snapshot(mock_capabilities, mock_render):
+    """验证 auto 路径只读取一次统一终端能力快照."""
+    mock_capabilities.return_value = TerminalCapabilities(
+        capability=TerminalCapability.FALLBACK,
+        color_level=TerminalColorLevel.ANSI256,
+    )
+
+    def dummy_gen(*_args, **_kwargs):
+        yield "dummy_output"
+
+    mock_render.side_effect = dummy_gen
+    img = _render_matrix_to_image(_build_qr_like_matrix())
+    list(draw(img))
+
+    assert mock_capabilities.call_count == 1
+    args, _ = mock_render.call_args
+    passed_config = args[1]
+    assert passed_config.color_level == "ansi256"
 
 
 def test_draw_rejects_invalid_payload_type():

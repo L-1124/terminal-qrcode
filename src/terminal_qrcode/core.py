@@ -11,6 +11,7 @@ from terminal_qrcode.contracts import (
     Matrix,
     RenderConfig,
     Renderer,
+    TerminalCapabilities,
     TerminalCapability,
     TerminalColorLevel,
 )
@@ -78,6 +79,30 @@ def _resolve_color_level(config: RenderConfig) -> ColorLevelName:
     if level is TerminalColorLevel.ANSI16:
         return "ansi16"
     return "none"
+
+
+def _resolve_terminal_capabilities(config: RenderConfig) -> TerminalCapabilities:
+    """解析最终终端能力快照."""
+    if config.force_renderer and config.color_level != "auto":
+        return TerminalCapabilities(
+            capability=_resolve_capability(config),
+            color_level=TerminalColorLevel[config.color_level.upper()],
+        )
+
+    from terminal_qrcode.probe import TerminalProbe
+
+    probe = TerminalProbe()
+    if config.force_renderer:
+        return TerminalCapabilities(
+            capability=_resolve_capability(config),
+            color_level=probe.probe_color(timeout=config.timeout),
+        )
+    if config.color_level != "auto":
+        return TerminalCapabilities(
+            capability=probe.probe(timeout=config.timeout),
+            color_level=TerminalColorLevel[config.color_level.upper()],
+        )
+    return probe.capabilities(timeout=config.timeout)
 
 
 def _validate_config(config: RenderConfig) -> None:
@@ -161,8 +186,17 @@ def run_pipeline(
     """执行从输入到渲染输出的完整编排流程."""
     final_config = _merge_config(config, overrides or {})
     _validate_config(final_config)
-    capability = _resolve_capability(final_config)
-    final_color_level = _resolve_color_level(final_config)
+    terminal_capabilities = _resolve_terminal_capabilities(final_config)
+    capability = terminal_capabilities.capability
+    color_level = terminal_capabilities.color_level
+    if color_level is TerminalColorLevel.TRUECOLOR:
+        final_color_level = "truecolor"
+    elif color_level is TerminalColorLevel.ANSI256:
+        final_color_level = "ansi256"
+    elif color_level is TerminalColorLevel.ANSI16:
+        final_color_level = "ansi16"
+    else:
+        final_color_level = "none"
     final_config = dataclasses.replace(final_config, color_level=final_color_level)
     if capability in {
         TerminalCapability.KITTY,

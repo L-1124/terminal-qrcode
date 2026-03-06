@@ -23,6 +23,7 @@ def _clear_probe_cache():
     """每个测试前清理 probe 缓存，避免跨用例污染."""
     TerminalProbe._cache = None
     TerminalProbe._color_cache = None
+    TerminalProbe._capabilities_cache = None
 
 
 @patch.dict("os.environ", {"NO_COLOR": "1"}, clear=True)
@@ -319,6 +320,25 @@ def test_probe_cached_after_first_call(mock_stdin, mock_stdout, mock_raw_mode, m
     assert probe.probe(timeout=0.2) == TerminalCapability.KITTY
     assert probe.probe(timeout=0.2) == TerminalCapability.KITTY
     assert mock_retry.call_count == 1
+
+
+@patch.dict("os.environ", {"TERM": "xterm-256color"}, clear=True)
+@patch("terminal_qrcode.probe.TerminalProbe.probe_color")
+@patch("terminal_qrcode.probe.TerminalProbe.probe")
+def test_capabilities_cached_after_first_call(mock_probe, mock_probe_color):
+    """验证终端能力快照会整体缓存，避免重复组合探测."""
+    mock_probe.return_value = TerminalCapability.FALLBACK
+    mock_probe_color.return_value = TerminalColorLevel.ANSI256
+
+    probe = TerminalProbe()
+    first = probe.capabilities(timeout=0.2)
+    second = probe.capabilities(timeout=0.2)
+
+    assert first == second
+    assert first.capability == TerminalCapability.FALLBACK
+    assert first.color_level == TerminalColorLevel.ANSI256
+    assert mock_probe.call_count == 1
+    assert mock_probe_color.call_count == 1
 
 
 @patch.dict("os.environ", {"TERM_PROGRAM": "WezTerm"}, clear=False)

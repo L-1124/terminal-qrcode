@@ -11,7 +11,7 @@ from collections.abc import Generator
 from dataclasses import dataclass
 from typing import Any
 
-from terminal_qrcode.contracts import TerminalCapability, TerminalColorLevel
+from terminal_qrcode.contracts import TerminalCapabilities, TerminalCapability, TerminalColorLevel
 
 logger = logging.getLogger(__name__)
 
@@ -53,11 +53,21 @@ class _ColorProbeCache:
     elapsed_ms: float
 
 
+@dataclass(frozen=True)
+class _CapabilitiesCache:
+    key: tuple[object, ...]
+    value: TerminalCapabilities
+    capability_source: str
+    color_source: str
+    elapsed_ms: float
+
+
 class TerminalProbe:
     """终端能力探测器."""
 
     _cache: _ProbeCache | None = None
     _color_cache: _ColorProbeCache | None = None
+    _capabilities_cache: _CapabilitiesCache | None = None
 
     @staticmethod
     def _parse_term_features(features: str) -> tuple[bool, bool]:
@@ -299,6 +309,11 @@ class TerminalProbe:
             sys.platform,
         )
 
+    @classmethod
+    def _capabilities_cache_key(cls) -> tuple[object, ...]:
+        """构建终端能力快照缓存 key."""
+        return cls._cache_key() + cls._color_cache_key()
+
     @staticmethod
     def _parse_force_color(value: str) -> TerminalColorLevel | None:
         """解析 FORCE_COLOR 语义."""
@@ -454,3 +469,39 @@ class TerminalProbe:
 
         source = "tmux_conservative_fallback" if "TMUX" in os.environ else "fallback"
         return _finalize(TerminalCapability.FALLBACK, source)
+
+    def capabilities(self, timeout: float = 0.1) -> TerminalCapabilities:
+        """
+        探测并缓存终端能力快照.
+
+        Args:
+            timeout: I/O 阻塞超时时间(秒).
+
+        Returns:
+            TerminalCapabilities: 包含图形协议与文本颜色等级的快照.
+
+        """
+        key = self._capabilities_cache_key()
+        cache = self._capabilities_cache
+        if cache is not None and cache.key == key:
+            return cache.value
+
+        start = time.monotonic()
+        capability = self.probe(timeout=timeout)
+        capability_cache = self._cache
+        color_level = self.probe_color(timeout=timeout)
+        color_cache = self._color_cache
+        value = TerminalCapabilities(capability=capability, color_level=color_level)
+        elapsed_ms = (time.monotonic() - start) * 1000.0
+        capability_source = capability_cache.probe_source if capability_cache is not None else "unknown"
+        color_source = color_cache.probe_source if color_cache is not None else "unknown"
+        self._capabilities_cache = _CapabilitiesCache(key, value, capability_source, color_source, elapsed_ms)
+        logger.debug(
+            "capabilities: capability=%s(%s) color=%s(%s) %.1fms",
+            capability.name,
+            capability_source,
+            color_level.name,
+            color_source,
+            elapsed_ms,
+        )
+        return value
