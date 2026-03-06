@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <math.h>
 
 #include <png.h>
 #include <turbojpeg.h>
@@ -1541,6 +1542,350 @@ cimage_estimate_module_size(PyObject *self, PyObject *args)
     return PyFloat_FromDouble(module_size);
 }
 
+typedef struct {
+    double x;
+    double y;
+    double module;
+    int count;
+    int score;
+} FinderCenter;
+
+static uint8_t
+bit_at(const uint8_t *bits, int width, int height, int x, int y)
+{
+    if (x < 0 || y < 0 || x >= width || y >= height) {
+        return 0;
+    }
+    return bits[y * width + x] ? 1 : 0;
+}
+
+static int
+ratio_match_11311(const int runs[5], double variance)
+{
+    double total = (double)runs[0] + runs[1] + runs[2] + runs[3] + runs[4];
+    double module;
+    double tol;
+    if (runs[0] <= 0 || runs[1] <= 0 || runs[2] <= 0 || runs[3] <= 0 || runs[4] <= 0) {
+        return 0;
+    }
+    if (total < 7.0) {
+        return 0;
+    }
+    module = total / 7.0;
+    tol = module * variance;
+    if (fabs((double)runs[0] - module) > tol) return 0;
+    if (fabs((double)runs[1] - module) > tol) return 0;
+    if (fabs((double)runs[3] - module) > tol) return 0;
+    if (fabs((double)runs[4] - module) > tol) return 0;
+    if (fabs((double)runs[2] - 3.0 * module) > (tol * 3.0)) return 0;
+    return 1;
+}
+
+static int
+collect_cross_runs_horizontal(const uint8_t *bits, int width, int height, int cx, int cy, int runs[5])
+{
+    int x;
+    int c2 = 0, c1 = 0, c0 = 0, c3 = 0, c4 = 0;
+    if (!bit_at(bits, width, height, cx, cy)) return 0;
+
+    x = cx;
+    while (x >= 0 && bit_at(bits, width, height, x, cy)) {
+        c2++;
+        x--;
+    }
+    while (x >= 0 && !bit_at(bits, width, height, x, cy)) {
+        c1++;
+        x--;
+    }
+    while (x >= 0 && bit_at(bits, width, height, x, cy)) {
+        c0++;
+        x--;
+    }
+
+    x = cx + 1;
+    while (x < width && bit_at(bits, width, height, x, cy)) {
+        c2++;
+        x++;
+    }
+    while (x < width && !bit_at(bits, width, height, x, cy)) {
+        c3++;
+        x++;
+    }
+    while (x < width && bit_at(bits, width, height, x, cy)) {
+        c4++;
+        x++;
+    }
+
+    runs[0] = c0;
+    runs[1] = c1;
+    runs[2] = c2;
+    runs[3] = c3;
+    runs[4] = c4;
+    return 1;
+}
+
+static int
+collect_cross_runs_vertical(const uint8_t *bits, int width, int height, int cx, int cy, int runs[5])
+{
+    int y;
+    int c2 = 0, c1 = 0, c0 = 0, c3 = 0, c4 = 0;
+    if (!bit_at(bits, width, height, cx, cy)) return 0;
+
+    y = cy;
+    while (y >= 0 && bit_at(bits, width, height, cx, y)) {
+        c2++;
+        y--;
+    }
+    while (y >= 0 && !bit_at(bits, width, height, cx, y)) {
+        c1++;
+        y--;
+    }
+    while (y >= 0 && bit_at(bits, width, height, cx, y)) {
+        c0++;
+        y--;
+    }
+
+    y = cy + 1;
+    while (y < height && bit_at(bits, width, height, cx, y)) {
+        c2++;
+        y++;
+    }
+    while (y < height && !bit_at(bits, width, height, cx, y)) {
+        c3++;
+        y++;
+    }
+    while (y < height && bit_at(bits, width, height, cx, y)) {
+        c4++;
+        y++;
+    }
+
+    runs[0] = c0;
+    runs[1] = c1;
+    runs[2] = c2;
+    runs[3] = c3;
+    runs[4] = c4;
+    return 1;
+}
+
+static int
+append_or_merge_center(FinderCenter *centers, int *center_count, int center_cap, double x, double y, double module)
+{
+    int i;
+    double merge_radius = module * 1.6;
+    for (i = 0; i < *center_count; i++) {
+        double dx = centers[i].x - x;
+        double dy = centers[i].y - y;
+        double dist = sqrt(dx * dx + dy * dy);
+        if (dist <= merge_radius) {
+            int n = centers[i].count + 1;
+            centers[i].x = (centers[i].x * centers[i].count + x) / n;
+            centers[i].y = (centers[i].y * centers[i].count + y) / n;
+            centers[i].module = (centers[i].module * centers[i].count + module) / n;
+            centers[i].count = n;
+            centers[i].score += 1;
+            return 0;
+        }
+    }
+    if (*center_count >= center_cap) {
+        return -1;
+    }
+    centers[*center_count].x = x;
+    centers[*center_count].y = y;
+    centers[*center_count].module = module;
+    centers[*center_count].count = 1;
+    centers[*center_count].score = 1;
+    *center_count += 1;
+    return 0;
+}
+
+static PyObject *
+cimage_find_finder_centers(PyObject *self, PyObject *args)
+{
+    Py_buffer in_buf;
+    int width, height;
+    double variance;
+    const uint8_t *bits;
+    FinderCenter *centers = NULL;
+    int center_cap = 256;
+    int center_count = 0;
+    int x, y;
+    int i;
+    int idx_tl = -1;
+    int idx_tr = -1;
+    int idx_bl = -1;
+
+    (void)self;
+
+    if (!PyArg_ParseTuple(args, "y*iid", &in_buf, &width, &height, &variance)) {
+        return NULL;
+    }
+    if (width <= 0 || height <= 0 || in_buf.len != (Py_ssize_t)width * height) {
+        PyBuffer_Release(&in_buf);
+        PyErr_SetString(PyExc_ValueError, "Bits length mismatch.");
+        return NULL;
+    }
+    if (variance <= 0.0) {
+        PyBuffer_Release(&in_buf);
+        PyErr_SetString(PyExc_ValueError, "variance must be > 0.");
+        return NULL;
+    }
+
+    bits = (const uint8_t *)in_buf.buf;
+    centers = (FinderCenter *)PyMem_Calloc((size_t)center_cap, sizeof(FinderCenter));
+    if (centers == NULL) {
+        PyBuffer_Release(&in_buf);
+        return PyErr_NoMemory();
+    }
+
+    for (y = 1; y < height - 1; y++) {
+        for (x = 1; x < width - 1; x++) {
+            int hruns[5];
+            int vruns[5];
+            double hmodule;
+            double vmodule;
+            double module;
+            if (!bit_at(bits, width, height, x, y)) {
+                continue;
+            }
+            if (!collect_cross_runs_horizontal(bits, width, height, x, y, hruns)) {
+                continue;
+            }
+            if (!ratio_match_11311(hruns, variance)) {
+                continue;
+            }
+            if (!collect_cross_runs_vertical(bits, width, height, x, y, vruns)) {
+                continue;
+            }
+            if (!ratio_match_11311(vruns, variance)) {
+                continue;
+            }
+
+            hmodule = ((double)hruns[0] + hruns[1] + hruns[2] + hruns[3] + hruns[4]) / 7.0;
+            vmodule = ((double)vruns[0] + vruns[1] + vruns[2] + vruns[3] + vruns[4]) / 7.0;
+            module = (hmodule + vmodule) * 0.5;
+            if (append_or_merge_center(centers, &center_count, center_cap, (double)x, (double)y, module) < 0) {
+                PyMem_Free(centers);
+                PyBuffer_Release(&in_buf);
+                PyErr_SetString(PyExc_MemoryError, "Too many finder candidates.");
+                return NULL;
+            }
+        }
+    }
+
+    if (center_count < 3) {
+        PyMem_Free(centers);
+        PyBuffer_Release(&in_buf);
+        Py_RETURN_NONE;
+    }
+
+    for (i = 0; i < center_count; i++) {
+        if (idx_tl < 0 || (centers[i].x + centers[i].y) < (centers[idx_tl].x + centers[idx_tl].y)) {
+            idx_tl = i;
+        }
+        if (idx_tr < 0 || (centers[i].x - centers[i].y) > (centers[idx_tr].x - centers[idx_tr].y)) {
+            idx_tr = i;
+        }
+        if (idx_bl < 0 || (centers[i].y - centers[i].x) > (centers[idx_bl].y - centers[idx_bl].x)) {
+            idx_bl = i;
+        }
+    }
+
+    if (idx_tl < 0 || idx_tr < 0 || idx_bl < 0 || idx_tl == idx_tr || idx_tl == idx_bl || idx_tr == idx_bl) {
+        PyMem_Free(centers);
+        PyBuffer_Release(&in_buf);
+        Py_RETURN_NONE;
+    }
+
+    {
+        double tlx = centers[idx_tl].x;
+        double tly = centers[idx_tl].y;
+        double trx = centers[idx_tr].x;
+        double try_ = centers[idx_tr].y;
+        double blx = centers[idx_bl].x;
+        double bly = centers[idx_bl].y;
+        PyMem_Free(centers);
+        PyBuffer_Release(&in_buf);
+        return Py_BuildValue("(dddddd)", tlx, tly, trx, try_, blx, bly);
+    }
+}
+
+static PyObject *
+cimage_sample_matrix_affine(PyObject *self, PyObject *args)
+{
+    Py_buffer in_buf;
+    int width, height, size;
+    double tlx, tly, hx, hy, vx, vy;
+    int window;
+    const uint8_t *bits;
+    PyObject *out;
+    uint8_t *dst;
+    int y, x;
+    int radius;
+
+    (void)self;
+
+    if (!PyArg_ParseTuple(args, "y*iiiddddddi", &in_buf, &width, &height, &size, &tlx, &tly, &hx, &hy, &vx, &vy, &window)) {
+        return NULL;
+    }
+    if (width <= 0 || height <= 0 || size <= 0 || in_buf.len != (Py_ssize_t)width * height) {
+        PyBuffer_Release(&in_buf);
+        PyErr_SetString(PyExc_ValueError, "Bits length mismatch.");
+        return NULL;
+    }
+    if (size <= 7) {
+        PyBuffer_Release(&in_buf);
+        PyErr_SetString(PyExc_ValueError, "QR size must be > 7.");
+        return NULL;
+    }
+    if (window <= 0 || (window % 2) == 0) {
+        PyBuffer_Release(&in_buf);
+        PyErr_SetString(PyExc_ValueError, "window must be a positive odd integer.");
+        return NULL;
+    }
+
+    bits = (const uint8_t *)in_buf.buf;
+    radius = window / 2;
+    out = PyBytes_FromStringAndSize(NULL, (Py_ssize_t)size * size);
+    if (out == NULL) {
+        PyBuffer_Release(&in_buf);
+        return NULL;
+    }
+    dst = (uint8_t *)PyBytes_AS_STRING(out);
+
+    for (y = 0; y < size; y++) {
+        for (x = 0; x < size; x++) {
+            double nx = ((double)x - 3.5) / ((double)size - 7.0);
+            double ny = ((double)y - 3.5) / ((double)size - 7.0);
+            double fx = tlx + nx * hx + ny * vx;
+            double fy = tly + nx * hy + ny * vy;
+            int cx = (int)llround(fx);
+            int cy = (int)llround(fy);
+            int yy, xx;
+            int black = 0;
+            int total = 0;
+
+            for (yy = cy - radius; yy <= cy + radius; yy++) {
+                int sy = yy;
+                if (sy < 0) sy = 0;
+                if (sy >= height) sy = height - 1;
+                for (xx = cx - radius; xx <= cx + radius; xx++) {
+                    int sx = xx;
+                    if (sx < 0) sx = 0;
+                    if (sx >= width) sx = width - 1;
+                    if (bits[sy * width + sx]) {
+                        black++;
+                    }
+                    total++;
+                }
+            }
+            dst[y * size + x] = (black * 2 >= total) ? 1 : 0;
+        }
+    }
+
+    PyBuffer_Release(&in_buf);
+    return out;
+}
+
 static PyMethodDef cimage_methods[] = {
     {"convert", cimage_convert, METH_VARARGS, "Convert image mode."},
     {"getbbox_nonwhite", cimage_getbbox_nonwhite, METH_VARARGS, "Get non-white bbox."},
@@ -1557,6 +1902,8 @@ static PyMethodDef cimage_methods[] = {
     {"find_black_bbox_bits", cimage_find_black_bbox_bits, METH_VARARGS, "Find black bbox in bits."},
     {"sample_matrix_3x3", cimage_sample_matrix_3x3, METH_VARARGS, "Sample QR matrix with 3x3 voting."},
     {"estimate_module_size", cimage_estimate_module_size, METH_VARARGS, "Estimate module size."},
+    {"find_finder_centers", cimage_find_finder_centers, METH_VARARGS, "Find finder centers via run-length scan."},
+    {"sample_matrix_affine", cimage_sample_matrix_affine, METH_VARARGS, "Sample QR matrix using affine coordinates."},
     {NULL, NULL, 0, NULL},
 };
 

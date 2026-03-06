@@ -112,3 +112,26 @@ def estimate_module_size(
     bbox: tuple[int, int, int, int],
 ) -> float | None:
     """估计 QR 模块尺寸."""
+
+def find_finder_centers(
+    bits: bytes,
+    width: int,
+    height: int,
+    variance: float,
+) -> tuple[float, float, float, float, float, float] | None:
+    """扫描并返回三个 Finder 中心点 `(tlx, tly, trx, try, blx, bly)`."""
+
+def sample_matrix_affine(
+    bits: bytes,
+    width: int,
+    height: int,
+    size: int,
+    tlx: float,
+    tly: float,
+    hx: float,
+    hy: float,
+    vx: float,
+    vy: float,
+    window: int,
+) -> bytes:
+    """在仿射坐标系下按窗口多数投票采样矩阵."""
