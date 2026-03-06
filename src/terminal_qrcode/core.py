@@ -1,7 +1,6 @@
 """二维码渲染核心兼容模块."""
 
 import dataclasses
-import logging
 from collections.abc import Generator
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
@@ -9,18 +8,19 @@ from terminal_qrcode.contracts import (
     ColorLevelName,
     ImageInput,
     ImageProtocol,
+    Matrix,
     RenderConfig,
     Renderer,
     TerminalCapability,
     TerminalColorLevel,
 )
+from terminal_qrcode.layout import _pad_border
+from terminal_qrcode.qr_restore import strict_restore_qr_matrix
 from terminal_qrcode.renderers import (
     RendererRegistry,
     build_default_renderer_registry,
 )
 from terminal_qrcode.simple_image import SimpleImage
-
-logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from terminal_qrcode._cimage import PixelMode
@@ -88,10 +88,18 @@ def _validate_config(config: RenderConfig) -> None:
         raise ValueError("max_cols must be greater than 0 when provided.")
     if config.color_level not in {"auto", "none", "ansi16", "ansi256", "truecolor"}:
         raise ValueError("color_level must be one of: auto, none, ansi16, ansi256, truecolor.")
+    if config.border < 0:
+        raise ValueError("border must be >= 0.")
+    if config.finder_variance <= 0:
+        raise ValueError("finder_variance must be greater than 0.")
+    if config.restore_window < 1 or config.restore_window % 2 == 0:
+        raise ValueError("restore_window must be an odd integer greater than or equal to 1.")
 
 
 def _to_simple_image(payload: ImageInput) -> SimpleImage:
-    """将输入图像归一化为 SimpleImage."""
+    """将图像输入归一化为 SimpleImage."""
+    if isinstance(payload, list):
+        raise TypeError("payload must be an image input when converting to SimpleImage.")
     if isinstance(payload, SimpleImage):
         return payload
     if not isinstance(payload, ImageProtocol):
@@ -119,6 +127,31 @@ def _to_simple_image(payload: ImageInput) -> SimpleImage:
     return SimpleImage(mode, (width, height), data)
 
 
+def _validate_matrix_shape(matrix: Matrix) -> None:
+    """验证布尔矩阵输入的合法性."""
+    if not matrix:
+        raise TypeError("payload matrix must not be empty.")
+    width = len(matrix[0])
+    if width <= 0:
+        raise TypeError("payload matrix rows must not be empty.")
+    for row in matrix:
+        if len(row) != width:
+            raise TypeError("payload matrix rows must have consistent width.")
+
+
+def _to_render_matrix(payload: ImageInput, config: RenderConfig) -> Matrix:
+    """将输入统一转换为渲染矩阵."""
+    if isinstance(payload, list):
+        _validate_matrix_shape(payload)
+        return [list(row) for row in payload]
+
+    image = _to_simple_image(payload)
+    matrix = strict_restore_qr_matrix(image, config)
+    if matrix is None:
+        raise ValueError("Failed to decode QR matrix from image. Input must be a valid machine-generated QR code.")
+    return _pad_border(matrix, config.border)
+
+
 def run_pipeline(
     payload: ImageInput,
     config: RenderConfig | None = None,
@@ -128,11 +161,21 @@ def run_pipeline(
     """执行从输入到渲染输出的完整编排流程."""
     final_config = _merge_config(config, overrides or {})
     _validate_config(final_config)
+    capability = _resolve_capability(final_config)
     final_color_level = _resolve_color_level(final_config)
     final_config = dataclasses.replace(final_config, color_level=final_color_level)
-    render_payload = _to_simple_image(payload)
-    capability = _resolve_capability(final_config)
-    logger.debug("Selected capability: %s", capability.name)
+    if capability in {
+        TerminalCapability.KITTY,
+        TerminalCapability.ITERM2,
+        TerminalCapability.WEZTERM,
+        TerminalCapability.SIXEL,
+    } and not isinstance(payload, list):
+        image_payload = _to_simple_image(payload)
+        if strict_restore_qr_matrix(image_payload, final_config) is None:
+            raise ValueError("Failed to decode QR matrix from image. Input must be a valid machine-generated QR code.")
+        render_payload: Matrix | SimpleImage = image_payload
+    else:
+        render_payload = _to_render_matrix(payload, final_config)
     renderer = DEFAULT_RENDERER_REGISTRY.get(capability)
     yield from renderer.render(render_payload, final_config)
 

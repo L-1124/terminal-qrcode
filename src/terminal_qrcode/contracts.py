@@ -3,13 +3,14 @@
 from collections.abc import Generator
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Literal, Protocol, runtime_checkable
+from typing import Literal, Protocol, TypeAlias, runtime_checkable
 
 from terminal_qrcode.simple_image import SimpleImage
 
 RendererName = Literal["kitty", "iterm2", "wezterm", "sixel", "halfblock"]
 HalfBlockMode = Literal["precision", "area"]
 ColorLevelName = Literal["auto", "none", "ansi16", "ansi256", "truecolor"]
+Matrix: TypeAlias = list[list[bool]]
 
 
 @dataclass(frozen=True)
@@ -26,6 +27,9 @@ class RenderConfig:
     img_width: int | None = None
     halfblock_mode: HalfBlockMode = "precision"
     tmux_passthrough: Literal["auto", "always", "never"] = "auto"
+    border: int = 2
+    finder_variance: float = 0.8
+    restore_window: int = 3
 
 
 class TerminalCapability(Enum):
@@ -63,13 +67,13 @@ class ImageProtocol(Protocol):
         ...
 
 
-ImageInput = SimpleImage | ImageProtocol
+ImageInput = SimpleImage | ImageProtocol | Matrix
 
 
 @runtime_checkable
 class Renderer(Protocol):
     """渲染器协议."""
 
-    def render(self, payload: list[list[bool]] | SimpleImage, config: RenderConfig) -> Generator[str, None, None]:
-        """流式分片渲染二维码矩阵或图像流."""
+    def render(self, payload: Matrix | SimpleImage, config: RenderConfig) -> Generator[str, None, None]:
+        """流式分片渲染二维码矩阵或图像."""
         ...

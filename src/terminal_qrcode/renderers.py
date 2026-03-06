@@ -9,30 +9,25 @@ from collections.abc import Callable, Generator, Hashable
 from functools import lru_cache
 from typing import Generic, TypeVar
 
-from colorama import Back, Fore, Style, just_fix_windows_console
+from colorama import just_fix_windows_console
 
-from terminal_qrcode.contracts import ColorLevelName, RenderConfig, Renderer, TerminalCapability
+from terminal_qrcode.contracts import ColorLevelName, Matrix, RenderConfig, Renderer, TerminalCapability
 from terminal_qrcode.layout import (
     _build_fit_plan,
     _cells_to_pixels,
+    _get_cell_pixel_size,
     _matrix_to_image,
-    _pad_border,
-    _resize_image_to_cols,
-    _resize_matrix_to_cols,
     _resolve_target_cols,
     _sixel_encode_mono,
     _threshold_to_bits,
-    _to_luma_bits,
     _upscale_matrix_nn,
 )
-from terminal_qrcode.qr_restore import strict_restore_qr_matrix
 from terminal_qrcode.simple_image import SimpleImage
 
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
 _HALFBLOCK_MAX_SCALE = 10
-_KITTY_SUPERSAMPLE = 3
 
 
 @lru_cache(maxsize=1)
@@ -41,12 +36,15 @@ def _ensure_colorama_console() -> None:
     just_fix_windows_console()
 
 
+_SGR_RESET = "\x1b[0m"
+
+
 def _halfblock_sgr(color_level: ColorLevelName, fg_dark: bool, bg_dark: bool) -> str:
     """根据颜色等级生成半块字符前景/背景 SGR 片段."""
     if color_level == "ansi16":
-        fg = Fore.BLACK if fg_dark else Fore.WHITE
-        bg = Back.BLACK if bg_dark else Back.WHITE
-        return f"{fg}{bg}"
+        fg_code = 30 if fg_dark else 97
+        bg_code = 40 if bg_dark else 107
+        return f"\x1b[{fg_code};{bg_code}m"
     if color_level == "ansi256":
         fg = "38;5;16" if fg_dark else "38;5;231"
         bg = "48;5;16" if bg_dark else "48;5;231"
@@ -118,80 +116,68 @@ def _tmux_wrap(sequence: str) -> str:
     return f"\x1bPtmux;{inner}\x1b\\"
 
 
+def _resolve_integer_scale(config: RenderConfig, matrix_size: int) -> tuple[int, int, int]:
+    """根据显示预算计算矩阵图像的整数放大倍率与展示 cell 尺寸."""
+    plan = _build_fit_plan(config, matrix_size, matrix_size)
+    display_cols_budget = max(1, plan.display_cols)
+
+    cell_size = _get_cell_pixel_size()
+    if cell_size is None:
+        cell_w, cell_h = _cells_to_pixels(1, 1)
+    else:
+        cell_w, cell_h = cell_size
+
+    max_pixel_width = display_cols_budget * cell_w
+    scale = max(1, max_pixel_width // matrix_size)
+    image_px = matrix_size * scale
+    display_cols = max(1, math.ceil(image_px / max(1, cell_w)))
+    display_rows = max(1, math.ceil(image_px / max(1, cell_h)))
+    return scale, display_cols, display_rows
+
+
 class HalfBlockRenderer:
     """半块字符降级渲染器."""
 
-    def render(self, payload: list[list[bool]] | SimpleImage, config: RenderConfig) -> Generator[str, None, None]:
-        """将矩阵或图像分块渲染为半块 Unicode 字符流."""
-        matrix, invert_for_render = self._normalize_to_matrix(payload, config)
-        yield from self._generate_characters(matrix, invert_for_render, config.color_level)
+    def render(self, payload: Matrix | SimpleImage, config: RenderConfig) -> Generator[str, None, None]:
+        """将矩阵渲染为半块 Unicode 字符流."""
+        if isinstance(payload, SimpleImage):
+            raise TypeError("HalfBlockRenderer only accepts matrix payload.")
+        matrix = self._normalize_matrix(payload, config)
+        yield from self._generate_characters(matrix, bool(config.invert), config.color_level)
 
-    def _normalize_to_matrix(
-        self, payload: list[list[bool]] | SimpleImage, config: RenderConfig
-    ) -> tuple[list[list[bool]], bool]:
-        """将不同类型的输入归一化为 bool 矩阵, 并确定是否需要反色."""
-        invert_for_render = bool(config.invert)
+    def _normalize_matrix(self, payload: Matrix, config: RenderConfig) -> Matrix:
+        """将输入矩阵归一化并按模式执行尺寸适配."""
+        matrix = [list(row) for row in payload]
+        if not matrix or not matrix[0]:
+            return [[False]]
+        base_w = len(matrix[0])
 
-        if not isinstance(payload, SimpleImage):
-            target_cols = _resolve_target_cols(config)
-            matrix = _resize_matrix_to_cols([list(row) for row in payload], target_cols)
-            return matrix, invert_for_render
-
-        if self._quick_qr_prior(payload):
-            strict_matrix = strict_restore_qr_matrix(payload.copy(), config)
-            if strict_matrix is not None:
-                matrix = self._resize_strict_matrix(strict_matrix, config)
-
-                return matrix, False
-
-        matrix = self._normalize_image_fallback(payload, config)
-        return matrix, invert_for_render
-
-    def _quick_qr_prior(self, image: SimpleImage) -> bool:
-        """快速判断图像是否值得走严格二维码还原路径."""
-        if min(image.width, image.height) < 21:
-            return False
-        bbox = image.getbbox_nonwhite()
-        if bbox is None:
-            return False
-        left, top, right, bottom = bbox
-        bbox_w = right - left
-        bbox_h = bottom - top
-        if bbox_w < 21 or bbox_h < 21:
-            return False
-        ratio = max(bbox_w, bbox_h) / max(1, min(bbox_w, bbox_h))
-        return ratio <= 1.8
-
-    def _resize_strict_matrix(self, strict_matrix: list[list[bool]], config: RenderConfig) -> list[list[bool]]:
-        """实现严格模式下的尺寸适配逻辑."""
         if not config.fit:
             target_cols = _resolve_target_cols(config)
-            return _resize_matrix_to_cols(strict_matrix, target_cols)
+            if base_w > target_cols:
+                raise ValueError(
+                    "Terminal width constraint is too small for QR matrix. Refusing lossy halfblock downscale."
+                )
+            return matrix
 
-        border = 2
-        plan = _build_fit_plan(config, len(strict_matrix), len(strict_matrix))
-
-        effective_cols = plan.avail_cols
+        plan = _build_fit_plan(config, len(matrix[0]), len(matrix))
+        effective_cols = max(1, plan.avail_cols)
         if config.max_cols is not None:
             effective_cols = min(effective_cols, config.max_cols)
         if config.img_width is not None:
             effective_cols = min(effective_cols, config.img_width)
-        effective_cols = max(1, effective_cols)
 
-        while border > 0 and (len(strict_matrix) + 2 * border) > effective_cols:
-            border -= 1
-
-        base_matrix = _pad_border(strict_matrix, border)
-        base_h = len(base_matrix)
-        base_w = len(base_matrix[0]) if base_h > 0 else 0
         if base_w > effective_cols:
-            return _resize_matrix_to_cols(base_matrix, effective_cols)
+            raise ValueError(
+                "Terminal is too narrow to render scannable QR in halfblock mode. "
+                "Increase width or use a graphic protocol renderer."
+            )
 
         if config.halfblock_mode == "precision":
-            return base_matrix
+            return matrix
 
-        scale = self._choose_scale_area_mode(base_w, base_h, effective_cols, plan.avail_rows)
-        return _upscale_matrix_nn(base_matrix, scale)
+        scale = self._choose_scale_area_mode(len(matrix[0]), len(matrix), plan.avail_cols, plan.avail_rows)
+        return _upscale_matrix_nn(matrix, scale)
 
     def _choose_scale_area_mode(self, base_w: int, base_h: int, avail_cols: int, avail_rows: int) -> int:
         """为面积优先模式选择可用整数 scale（仅允许偶数，且满足精确行高预算）."""
@@ -210,42 +196,20 @@ class HalfBlockRenderer:
             s_max -= 2
         return 1
 
-    def _normalize_image_fallback(self, payload: SimpleImage, config: RenderConfig) -> list[list[bool]]:
-        """实现普通图像的回退规约逻辑."""
-        img = payload.copy().convert("L")
-
-        bbox = img.getbbox_nonwhite()
-        if bbox:
-            img = img.crop(bbox)
-
-        plan = _build_fit_plan(config, img.width, img.height)
-        img = _resize_image_to_cols(
-            img,
-            plan.display_cols,
-        )
-        logger.debug("HalfBlock fallback: constraining image to target cols=%s", plan.display_cols)
-
-        bits, _threshold = _to_luma_bits(img, threshold=None)
-        matrix = []
-        for y in range(img.height):
-            row_start = y * img.width
-            row_end = row_start + img.width
-            matrix.append([b == 1 for b in bits[row_start:row_end]])
-        return matrix
-
     def _generate_characters(
-        self, matrix: list[list[bool]], invert_for_render: bool, color_level: ColorLevelName
+        self, matrix: Matrix, invert_for_render: bool, color_level: ColorLevelName
     ) -> Generator[str, None, None]:
         """将 bool 矩阵转换为字符串流."""
-        if len(matrix) % 2 != 0:
-            matrix.append([False] * len(matrix[0]))
+        rows = [row[:] for row in matrix]
+        if len(rows) % 2 != 0:
+            rows.append([False] * len(rows[0]))
 
         lines_per_chunk = 50
         buffer_pool: list[str] = []
 
-        for i in range(0, len(matrix), 2):
-            row_top = matrix[i]
-            row_bottom = matrix[i + 1]
+        for i in range(0, len(rows), 2):
+            row_top = rows[i]
+            row_bottom = rows[i + 1]
 
             line_chars = []
             for top, bottom in zip(row_top, row_bottom, strict=False):
@@ -268,7 +232,7 @@ class HalfBlockRenderer:
 
             line = "".join(line_chars)
             if color_level != "none":
-                line = f"{line}{Style.RESET_ALL}"
+                line = f"{line}{_SGR_RESET}"
             buffer_pool.append(line)
             if len(buffer_pool) >= lines_per_chunk:
                 yield "\n".join(buffer_pool) + "\n"
@@ -281,32 +245,18 @@ class HalfBlockRenderer:
 class KittyRenderer:
     """Kitty 终端图形协议渲染器."""
 
-    def render(self, payload: list[list[bool]] | SimpleImage, config: RenderConfig) -> Generator[str, None, None]:
-        """根据 Kitty 图形协议渲染矩阵或图像."""
+    def render(self, payload: Matrix | SimpleImage, config: RenderConfig) -> Generator[str, None, None]:
+        """根据 Kitty 图形协议渲染矩阵或原始图像."""
         if isinstance(payload, SimpleImage):
-            image = payload.copy().convert("RGBA")
+            image = payload.convert("RGBA")
+            plan = _build_fit_plan(config, image.width, image.height)
+            display_cols = max(1, plan.display_cols)
+            display_rows = max(1, plan.display_rows)
         else:
-            image = _matrix_to_image(payload, config.scale, "RGBA")
-        plan = _build_fit_plan(config, image.width, image.height)
-        display_cols = plan.display_cols
-        display_rows = plan.display_rows
-        pixel_cols = min(800, display_cols * _KITTY_SUPERSAMPLE) if config.fit else display_cols
-        image = _resize_image_to_cols(
-            image,
-            pixel_cols,
-            allow_upscale=True,
-        )
-        image.thumbnail((800, 800))
+            size = len(payload)
+            scale, display_cols, display_rows = _resolve_integer_scale(config, size)
+            image = _matrix_to_image(payload, scale, "RGBA")
         width, height = image.width, image.height
-        display_cols = min(display_cols, width)
-        logger.debug(
-            "Kitty rendering image: target_size=%sx%s, fit=%s display_cols=%s display_rows=%s",
-            width,
-            height,
-            config.fit,
-            display_cols,
-            display_rows,
-        )
 
         rgba_data = image.tobytes()
         b64_data = base64.b64encode(rgba_data).decode("ascii")
@@ -321,12 +271,7 @@ class KittyRenderer:
             m = 0 if is_last else 1
 
             if i == 0:
-                if config.fit:
-                    sequence = (
-                        f"\x1b_Ga=T,f=32,s={width},v={height},c={display_cols},r={display_rows},m={m};{chunk}\x1b\\"
-                    )
-                else:
-                    sequence = f"\x1b_Ga=T,f=32,s={width},v={height},m={m};{chunk}\x1b\\"
+                sequence = f"\x1b_Ga=T,f=32,s={width},v={height},c={display_cols},r={display_rows},m={m};{chunk}\x1b\\"
             else:
                 sequence = f"\x1b_Gm={m};{chunk}\x1b\\"
 
@@ -341,31 +286,20 @@ class KittyRenderer:
 class ITerm2Renderer:
     """iTerm2 终端图形协议渲染器."""
 
-    def render(self, payload: list[list[bool]] | SimpleImage, config: RenderConfig) -> Generator[str, None, None]:
-        """根据 iTerm2 内联图像协议渲染矩阵或图像."""
+    def render(self, payload: Matrix | SimpleImage, config: RenderConfig) -> Generator[str, None, None]:
+        """根据 iTerm2 内联图像协议渲染矩阵或原始图像."""
         if isinstance(payload, SimpleImage):
-            image = payload.copy().convert("RGB")
+            image = payload.convert("RGB")
+            plan = _build_fit_plan(config, image.width, image.height)
+            display_cols = max(1, plan.display_cols)
         else:
-            image = _matrix_to_image(payload, config.scale, "RGB")
-        plan = _build_fit_plan(config, image.width, image.height)
-        image = _resize_image_to_cols(
-            image,
-            plan.display_cols,
-            allow_upscale=True,
-        )
-        image.thumbnail((800, 800))
-        width_cells = min(plan.display_cols, image.width) if config.fit else "auto"
-        logger.debug(
-            "iTerm2 rendering image: target_size=%sx%s, fit=%s display_cols=%s",
-            image.width,
-            image.height,
-            config.fit,
-            plan.display_cols,
-        )
+            size = len(payload)
+            scale, display_cols, _display_rows = _resolve_integer_scale(config, size)
+            image = _matrix_to_image(payload, scale, "RGB")
 
         png_data = image.to_png_bytes()
         b64_data = base64.b64encode(png_data).decode("ascii")
-        payload_seq = f"\x1b]1337;File=inline=1;width={width_cells};height=auto:{b64_data}\x07"
+        payload_seq = f"\x1b]1337;File=inline=1;width={display_cols};height=auto:{b64_data}\x07"
 
         if _should_tmux_wrap(config):
             yield _tmux_wrap(payload_seq)
@@ -377,31 +311,20 @@ class ITerm2Renderer:
 class WezTermRenderer(ITerm2Renderer):
     """WezTerm 终端图形协议渲染器 (基于 iTerm2 协议增强)."""
 
-    def render(self, payload: list[list[bool]] | SimpleImage, config: RenderConfig) -> Generator[str, None, None]:
+    def render(self, payload: Matrix | SimpleImage, config: RenderConfig) -> Generator[str, None, None]:
         """根据 WezTerm 增强型的 iTerm2 内联图像协议渲染."""
         if isinstance(payload, SimpleImage):
-            image = payload.copy().convert("RGB")
+            image = payload.convert("RGB")
+            plan = _build_fit_plan(config, image.width, image.height)
+            display_cols = max(1, plan.display_cols)
         else:
-            image = _matrix_to_image(payload, config.scale, "RGB")
-        plan = _build_fit_plan(config, image.width, image.height)
-        image = _resize_image_to_cols(
-            image,
-            plan.display_cols,
-            allow_upscale=True,
-        )
-        image.thumbnail((1200, 1200))
-        width_cells = min(plan.display_cols, image.width) if config.fit else "auto"
-        logger.debug(
-            "WezTerm rendering image: target_size=%sx%s, fit=%s display_cols=%s",
-            image.width,
-            image.height,
-            config.fit,
-            plan.display_cols,
-        )
+            size = len(payload)
+            scale, display_cols, _display_rows = _resolve_integer_scale(config, size)
+            image = _matrix_to_image(payload, scale, "RGB")
 
         png_data = image.to_png_bytes()
         b64_data = base64.b64encode(png_data).decode("ascii")
-        payload_seq = f"\x1b]1337;File=inline=1;width={width_cells};height=auto;preserveAspectRatio=1:{b64_data}\x07"
+        payload_seq = f"\x1b]1337;File=inline=1;width={display_cols};height=auto;preserveAspectRatio=1:{b64_data}\x07"
 
         if _should_tmux_wrap(config):
             yield _tmux_wrap(payload_seq)
@@ -413,25 +336,17 @@ class WezTermRenderer(ITerm2Renderer):
 class SixelRenderer:
     """DEC Sixel 图形协议渲染器."""
 
-    def render(self, payload: list[list[bool]] | SimpleImage, config: RenderConfig) -> Generator[str, None, None]:
-        """根据 DEC Sixel 协议渲染矩阵或图像."""
+    def render(self, payload: Matrix | SimpleImage, config: RenderConfig) -> Generator[str, None, None]:
+        """根据 DEC Sixel 协议渲染矩阵或原始图像."""
         if isinstance(payload, SimpleImage):
-            image = payload.copy()
-            plan = _build_fit_plan(config, image.width, image.height)
-            target_w_px, target_h_px = _cells_to_pixels(plan.display_cols, plan.display_rows)
-            image = image.resize((target_w_px, target_h_px))
-            image.thumbnail((800, 800))
-            width, height = image.width, image.height
-            bits = _threshold_to_bits(image, threshold=128)
-            logger.debug("Sixel: using internal encoder, size=%sx%s", width, height)
+            image = payload.convert("L")
         else:
-            image = _matrix_to_image(payload, config.scale, "RGB").convert("L")
-            plan = _build_fit_plan(config, image.width, image.height)
-            target_w_px, target_h_px = _cells_to_pixels(plan.display_cols, plan.display_rows)
-            image = image.resize((target_w_px, target_h_px))
-            width, height = image.width, image.height
-            bits = _threshold_to_bits(image, threshold=128)
-            logger.debug("Sixel rendering (Matrix): %sx%s, scale=%s", width, height, config.scale)
+            size = len(payload)
+            scale, _display_cols, _display_rows = _resolve_integer_scale(config, size)
+            image = _matrix_to_image(payload, scale, "RGB").convert("L")
+
+        width, height = image.width, image.height
+        bits = _threshold_to_bits(image, threshold=128)
 
         header = f'\x1bP9q"1;1;{width};{height}#0;2;100;100;100#1;2;0;0;0'
         footer = "\x1b\\"

@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Any, overload
 
 from terminal_qrcode import core
-from terminal_qrcode.contracts import ColorLevelName, HalfBlockMode, ImageInput, RendererName
+from terminal_qrcode.contracts import ColorLevelName, HalfBlockMode, ImageInput, Matrix, RendererName
 from terminal_qrcode.simple_image import SimpleImage
 
 try:
@@ -43,6 +43,7 @@ def _build_overrides(
     img_width: int | None,
     halfblock_mode: HalfBlockMode | None,
     tmux_passthrough: str | None,
+    border: int | None = None,
 ) -> dict[str, object]:
     """构建渲染覆盖参数字典."""
     return {
@@ -54,6 +55,7 @@ def _build_overrides(
         "img_width": img_width,
         "halfblock_mode": halfblock_mode,
         "tmux_passthrough": tmux_passthrough,
+        "border": border,
     }
 
 
@@ -114,6 +116,7 @@ def draw(
     img_width: int | None = None,
     halfblock_mode: HalfBlockMode | None = None,
     tmux_passthrough: str | None = None,
+    border: int | None = None,
 ) -> DrawOutput: ...
 
 
@@ -129,6 +132,7 @@ def draw(
     img_width: int | None = None,
     halfblock_mode: HalfBlockMode | None = None,
     tmux_passthrough: str | None = None,
+    border: int | None = None,
 ) -> DrawOutput: ...
 
 
@@ -144,6 +148,7 @@ def draw(
     img_width: int | None = None,
     halfblock_mode: HalfBlockMode | None = None,
     tmux_passthrough: str | None = None,
+    border: int | None = None,
 ) -> DrawOutput: ...
 
 
@@ -158,6 +163,7 @@ def draw(
     img_width: int | None = None,
     halfblock_mode: HalfBlockMode | None = None,
     tmux_passthrough: str | None = None,
+    border: int | None = None,
 ) -> DrawOutput:
     """
     探测终端并生成及分片产出二维码渲染流.
@@ -172,6 +178,7 @@ def draw(
         img_width: 渲染宽度（fit=True 时仅显式指定才作为额外上限，fit=False 时未指定默认 40）.
         halfblock_mode: halfblock 严格路径策略（precision/area）.
         tmux_passthrough: tmux 穿透策略(auto/always/never).
+        border: halfblock 渲染时矩阵边距模块数（默认 2）.
 
     Returns:
         支持分片迭代与直接字符串输出的包装对象.
@@ -208,12 +215,13 @@ def draw(
         img_width=img_width,
         halfblock_mode=halfblock_mode,
         tmux_passthrough=tmux_passthrough,
+        border=border,
     )
     return DrawOutput(core.run_pipeline(payload, overrides=overrides))
 
 
-def decode_and_redraw(payload: ImageInput | str | Path | bytes | bytearray) -> ImageInput:
-    """先尝试解码二维码内容，再重建高精度二维码图像."""
+def decode_and_redraw(payload: ImageInput | str | Path | bytes | bytearray) -> Matrix:
+    """先尝试解码二维码内容，再重建二维码矩阵."""
     if qrcode is None or pyzarb is None:
         raise RuntimeError("decode_and_redraw requires optional dependency group [pyzarb].")
     qrcode_mod = qrcode
@@ -227,7 +235,7 @@ def decode_and_redraw(payload: ImageInput | str | Path | bytes | bytearray) -> I
     luma = image if image.mode == "L" else image.convert("L")
     decoded = pyzarb.decode((bytes(luma._data), luma.width, luma.height))
     if not decoded:
-        return image
+        raise ValueError("Failed to decode QR payload from image.")
 
     result = None
     for item in decoded:
@@ -236,7 +244,7 @@ def decode_and_redraw(payload: ImageInput | str | Path | bytes | bytearray) -> I
             result = item
             break
     if result is None:
-        return image
+        raise ValueError("Decoded symbols do not contain a QRCode payload.")
 
     qr = qrcode_mod.QRCode(
         version=None,
@@ -246,7 +254,7 @@ def decode_and_redraw(payload: ImageInput | str | Path | bytes | bytearray) -> I
     )
     qr.add_data(getattr(result, "data", b""))
     qr.make(fit=True)
-    return SimpleImage.from_qr_matrix(qr.get_matrix())
+    return [list(row) for row in qr.get_matrix()]
 
 
 def generate(
@@ -310,7 +318,7 @@ def generate(
     )
     qr.add_data(data)
     qr.make(fit=True)
-    payload = SimpleImage.from_qr_matrix(qr.get_matrix())
+    payload = [list(row) for row in qr.get_matrix()]
 
     overrides = _build_overrides(
         force_renderer=force_renderer,
