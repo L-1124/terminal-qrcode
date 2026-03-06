@@ -53,25 +53,6 @@ def test_main_forwarding_core_flags(monkeypatch, tmp_path, extra_args, expected_
     assert seen.get("img_width") is None
 
 
-def test_main_accepts_data_option(monkeypatch, capsys):
-    """验证 CLI 支持通过 --data 生成二维码."""
-    seen: dict[str, object] = {}
-
-    def _fake_generate(*args, **kwargs):
-        seen["data"] = args[0]
-        seen.update(kwargs)
-        return DrawOutput(["ok-data"])
-
-    monkeypatch.setattr("sys.argv", ["terminal_qrcode", "--data", "hello", "-r", "halfblock"])
-    monkeypatch.setattr("terminal_qrcode.__main__.generate", _fake_generate)
-    main()
-    out = capsys.readouterr().out
-    assert "ok-data" in out
-    assert seen["data"] == "hello"
-    assert seen["renderer"] == "halfblock"
-    assert seen["repair"] == "off"
-
-
 def test_main_forwards_repair_option(monkeypatch, tmp_path):
     """验证 CLI 会透传 repair 选项."""
     path = tmp_path / "x.png"
@@ -87,10 +68,3 @@ def test_main_forwards_repair_option(monkeypatch, tmp_path):
     main()
     assert seen["renderer"] == "auto"
     assert seen["repair"] == "strict"
-
-
-def test_main_rejects_when_image_and_data_are_both_set(monkeypatch):
-    """验证 CLI 同时传 image_path 和 --data 时返回参数错误."""
-    monkeypatch.setattr("sys.argv", ["terminal_qrcode", "x.png", "--data", "hello"])
-    with pytest.raises(SystemExit):
-        main()

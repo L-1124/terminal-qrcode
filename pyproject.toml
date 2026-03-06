@@ -6,21 +6,22 @@ requires-python = ">=3.10"
 authors = [
   { name = "Luren", email = "68656403+luren-dc@users.noreply.github.com" }
 ]
+scripts = { "terminal-qrcode" = "terminal_qrcode.__main__:main" }
 dependencies = [
-    "colorama>=0.4.6",
+  "colorama>=0.4.6",
 ]
 dynamic = ["version"]
 
-[project.optional-dependencies]
-qr = [
-  "qrcode>=8.2",
-]
-pyzbar = [
-  "pyzbar>=0.1.9",
-  "qrcode>=8.2",
-]
-
 [dependency-groups]
+dev = [
+  { include-group = "integration" },
+  { include-group = "lint" },
+  { include-group = "test" },
+]
+integration = [
+  "pillow>=12.1.1",
+  "qrcode>=8.2",
+]
 lint = [
   "pre-commit>=4.5.1",
   "pyrefly>=0.55.0",
@@ -29,15 +30,6 @@ lint = [
 test = [
   "pytest>=9.0.2",
   "setuptools>=82.0.0",
-]
-integration = [
-  "pyzbar>=0.1.9",
-  "qrcode>=8.2",
-]
-dev = [
-  { include-group = "lint" },
-  { include-group = "test" },
-  { include-group = "integration" },
 ]
 
 [build-system]
@@ -68,7 +60,7 @@ python-platform = "All"
 
 [tool.pyright]
 pythonVersion = "3.10"
-pythonPlatform  = "All"
+pythonPlatform = "All"
 
 [tool.ruff]
 line-length = 120

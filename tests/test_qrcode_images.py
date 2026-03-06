@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from terminal_qrcode import draw
 from terminal_qrcode.simple_image import SimpleImage
 
 _QRCODE_IMAGE_DIR = Path(__file__).parent / "qrcode"
@@ -33,3 +34,29 @@ def test_qrcode_images_are_decodable(sample_id):
         assert image.width > 0
         assert image.height > 0
         assert image.mode in {"L", "RGB", "RGBA"}
+
+
+def test_draw_accepts_qrcode_pillow_image():
+    """验证 draw 支持 qrcode 结合 Pillow 生成的图像对象."""
+    qrcode_mod = pytest.importorskip("qrcode")
+
+    qr = qrcode_mod.QRCode(border=4, box_size=4)
+    qr.add_data("https://example.com")
+    qr.make(fit=True)
+    image = qr.make_image(fill_color="black", back_color="white").get_image()
+
+    output = str(draw(image, renderer="halfblock", fit=False, img_width=80))
+    assert any(c in output for c in ("▄", "▀", "█", " "))
+
+
+def test_draw_accepts_qrcode_base_image_wrapper():
+    """验证 draw 支持 qrcode BaseImage 包装对象."""
+    qrcode_mod = pytest.importorskip("qrcode")
+
+    qr = qrcode_mod.QRCode(border=4, box_size=4)
+    qr.add_data("terminal-qrcode")
+    qr.make(fit=True)
+    wrapped_image = qr.make_image(fill_color="black", back_color="white")
+
+    output = str(draw(wrapped_image, renderer="halfblock", fit=False, img_width=80))
+    assert any(c in output for c in ("▄", "▀", "█", " "))

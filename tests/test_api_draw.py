@@ -3,14 +3,13 @@
 import importlib
 import os
 from pathlib import Path
-from types import ModuleType, SimpleNamespace
 from typing import Any
 from unittest.mock import patch
 
 import pytest
 
 import terminal_qrcode
-from terminal_qrcode import DrawOutput, decode_and_redraw, draw, generate, layout
+from terminal_qrcode import draw, layout
 from terminal_qrcode.contracts import ImageProtocol, RenderConfig, TerminalCapabilities, TerminalColorLevel
 from terminal_qrcode.core import RenderRequest, TerminalCapability
 from terminal_qrcode.simple_image import SimpleImage
@@ -59,34 +58,6 @@ def _render_matrix_to_image(matrix: list[list[bool]], module: int = 4, quiet: in
                 for x in range(x0, x0 + module):
                     img.putpixel((x, y), value)
     return img
-
-
-class _FakeQrcodeModule(ModuleType):
-    """带已知属性的 qrcode 模块桩."""
-
-    QRCode: type
-    constants: SimpleNamespace
-
-
-class _FakePyzbarModule(ModuleType):
-    """带已知属性的 pyzbar 模块桩."""
-
-    decode: object
-
-
-def _make_fake_qrcode_module(qr_class: type) -> ModuleType:
-    """构造最小 qrcode 模块桩."""
-    module = _FakeQrcodeModule("qrcode")
-    module.QRCode = qr_class
-    module.constants = SimpleNamespace(ERROR_CORRECT_L=1, ERROR_CORRECT_M=2, ERROR_CORRECT_Q=3, ERROR_CORRECT_H=4)
-    return module
-
-
-def _make_fake_pyzbar_module(decode_func) -> ModuleType:
-    """构造最小 pyzbar 模块桩."""
-    module = _FakePyzbarModule("pyzbar.pyzbar")
-    module.decode = decode_func
-    return module
 
 
 class _PILLikeImage(ImageProtocol):
@@ -163,14 +134,10 @@ def test_draw_result_supports_str_and_iteration(mock_run_pipeline):
 
 
 def test_optional_dependencies_are_lazy_after_module_reload():
-    """验证模块导入后可选依赖仍保持未加载状态."""
+    """验证模块重载后核心导出仍可用."""
     reloaded = importlib.reload(terminal_qrcode)
-    assert reloaded._qrcode is reloaded._UNSET
-    assert reloaded._pyzbar is reloaded._UNSET
     globals()["DrawOutput"] = reloaded.DrawOutput
-    globals()["decode_and_redraw"] = reloaded.decode_and_redraw
     globals()["draw"] = reloaded.draw
-    globals()["generate"] = reloaded.generate
     globals()["layout"] = reloaded.layout
 
 
@@ -206,6 +173,27 @@ def test_draw_rejects_invalid_payload_type():
 def test_draw_accepts_pil_like_payload():
     """验证 draw 支持 PIL 风格图像协议对象输入."""
     payload = _PILLikeImage(_render_matrix_to_image(_build_qr_like_matrix()))
+    chunks = list(draw(payload, renderer="halfblock", fit=False, img_width=80))
+    output = "".join(chunks)
+    assert any(c in output for c in ("▄", "▀", "█", " "))
+
+
+def test_draw_accepts_qrcode_base_image_payload():
+    """验证 draw 支持 qrcode.image.BaseImage 包装对象输入."""
+    base_mod = pytest.importorskip("qrcode.image.base")
+
+    class _WrappedBaseImage(base_mod.BaseImage):
+        def drawrect(self, row, col):
+            _ = row, col
+
+        def save(self, stream, kind=None):
+            _ = stream, kind
+
+        def new_image(self, **kwargs):
+            _ = kwargs
+            return _render_matrix_to_image(_build_qr_like_matrix())
+
+    payload = _WrappedBaseImage(border=4, width=25, box_size=1, qrcode_modules=_build_qr_like_matrix())
     chunks = list(draw(payload, renderer="halfblock", fit=False, img_width=80))
     output = "".join(chunks)
     assert any(c in output for c in ("▄", "▀", "█", " "))
@@ -271,105 +259,11 @@ def test_draw_fit_true_without_img_width_uses_none_override(mock_run_pipeline):
     assert request.config.img_width is None
 
 
-@patch("terminal_qrcode.core.run_pipeline")
-def test_generate_returns_draw_output(mock_run_pipeline, monkeypatch):
-    """验证 generate 返回 DrawOutput 并传递矩阵 payload."""
-
-    class _FakeQRCode:
-        def __init__(self, **_kwargs):
-            pass
-
-        def add_data(self, _data: str) -> None:
-            pass
-
-        def make(self, fit: bool = True) -> None:
-            _ = fit
-
-        def get_matrix(self) -> list[list[bool]]:
-            return [[True, False], [False, True]]
-
-    def _gen():
-        yield "q"
-        yield "r"
-
-    mock_run_pipeline.return_value = _gen()
-    fake_qrcode = _make_fake_qrcode_module(_FakeQRCode)
-    monkeypatch.setattr(terminal_qrcode, "_qrcode", fake_qrcode)
-
-    result = generate("hello", renderer="halfblock", img_width=2)
-    assert isinstance(result, DrawOutput)
-    assert str(result) == "qr"
-
-    request = mock_run_pipeline.call_args.args[0]
-    assert isinstance(request, RenderRequest)
-    assert request.payload == [[True, False], [False, True]]
-    assert request.config.renderer == "halfblock"
-
-
-def test_generate_lazy_imports_qrcode(monkeypatch):
-    """验证 generate 首次调用时才按需导入 qrcode."""
-
-    class _FakeQRCode:
-        def __init__(self, **_kwargs):
-            pass
-
-        def add_data(self, _data: str) -> None:
-            pass
-
-        def make(self, fit: bool = True) -> None:
-            _ = fit
-
-        def get_matrix(self) -> list[list[bool]]:
-            return [[True, False], [False, True]]
-
-    fake_qrcode = _make_fake_qrcode_module(_FakeQRCode)
-    monkeypatch.setattr(terminal_qrcode, "_qrcode", terminal_qrcode._UNSET)
-
-    def _fake_import(name: str):
-        if name == "qrcode":
-            return fake_qrcode
-        raise AssertionError(f"unexpected import: {name}")
-
-    monkeypatch.setattr(terminal_qrcode.importlib, "import_module", _fake_import)
-
-    out = generate("hello", renderer="halfblock", img_width=2)
-    assert str(out)
-    assert terminal_qrcode._qrcode is fake_qrcode
-
-
-def test_generate_rejects_inconsistent_matrix_width(monkeypatch):
-    """验证 generate 对行宽不一致矩阵在渲染时抛 ValueError."""
-
-    class _FakeQRCode:
-        def __init__(self, **_kwargs):
-            pass
-
-        def add_data(self, _data: str) -> None:
-            pass
-
-        def make(self, fit: bool = True) -> None:
-            _ = fit
-
-        def get_matrix(self) -> list[list[bool]]:
-            return [[True, False], [True]]
-
-    fake_qrcode = _make_fake_qrcode_module(_FakeQRCode)
-    monkeypatch.setattr(terminal_qrcode, "_qrcode", fake_qrcode)
-    with pytest.raises(TypeError, match="consistent width"):
-        _ = str(generate("hello", renderer="halfblock"))
-
-
 def test_draw_rejects_removed_force_renderer_keyword():
     """验证 draw 不再接受 force_renderer 旧参数."""
     image = _render_matrix_to_image(_build_qr_like_matrix())
     with pytest.raises(TypeError, match="force_renderer"):
         _ = eval("draw(image, force_renderer='halfblock')", {"draw": terminal_qrcode.draw, "image": image})
-
-
-def test_generate_rejects_removed_force_renderer_keyword():
-    """验证 generate 不再接受 force_renderer 旧参数."""
-    with pytest.raises(TypeError, match="force_renderer"):
-        _ = eval("generate('hello', force_renderer='halfblock')", {"generate": terminal_qrcode.generate})
 
 
 @patch("terminal_qrcode.core.strict_restore_qr_matrix")
@@ -384,131 +278,3 @@ def test_draw_best_effort_repair_uses_current_strict_restore(mock_restore):
     passed_config = args[1]
     assert isinstance(passed_config, RenderConfig)
     assert passed_config.repair == "best_effort"
-
-
-def test_decode_and_redraw_rebuilds_qr_payload(monkeypatch):
-    """验证 decode_and_redraw 会先解码再重建二维码矩阵."""
-
-    class _FakeDecodeItem:
-        type = "QRCODE"
-        data = b"decoded"
-
-    class _FakePyzarb:
-        @staticmethod
-        def decode(_raw):
-            return [_FakeDecodeItem()]
-
-    class _FakeQRCode:
-        def __init__(self, **_kwargs):
-            pass
-
-        def add_data(self, _data):
-            pass
-
-        def make(self, fit: bool = True):
-            _ = fit
-
-        def get_matrix(self):
-            return [[True, False], [False, True]]
-
-    fake_qrcode = _make_fake_qrcode_module(_FakeQRCode)
-    monkeypatch.setattr(terminal_qrcode, "_qrcode", fake_qrcode)
-    monkeypatch.setattr(terminal_qrcode, "_pyzbar", _make_fake_pyzbar_module(_FakePyzarb.decode))
-
-    source = _render_matrix_to_image(_build_qr_like_matrix())
-    payload = decode_and_redraw(source)
-    assert payload == [[True, False], [False, True]]
-
-
-def test_decode_and_redraw_lazy_imports_optional_dependencies(monkeypatch):
-    """验证 decode_and_redraw 首次调用时才按需导入可选依赖."""
-
-    class _FakeDecodeItem:
-        type = "QRCODE"
-        data = b"decoded"
-
-    class _FakePyzarb:
-        @staticmethod
-        def decode(_raw):
-            return [_FakeDecodeItem()]
-
-    class _FakeQRCode:
-        def __init__(self, **_kwargs):
-            pass
-
-        def add_data(self, _data):
-            pass
-
-        def make(self, fit: bool = True):
-            _ = fit
-
-        def get_matrix(self):
-            return [[True, False], [False, True]]
-
-    fake_qrcode = _make_fake_qrcode_module(_FakeQRCode)
-    monkeypatch.setattr(terminal_qrcode, "_qrcode", terminal_qrcode._UNSET)
-    monkeypatch.setattr(terminal_qrcode, "_pyzbar", terminal_qrcode._UNSET)
-
-    def _fake_import(name: str):
-        if name == "qrcode":
-            return fake_qrcode
-        if name == "pyzbar.pyzbar":
-            return _make_fake_pyzbar_module(_FakePyzarb.decode)
-        raise AssertionError(f"unexpected import: {name}")
-
-    monkeypatch.setattr(terminal_qrcode.importlib, "import_module", _fake_import)
-
-    source = _render_matrix_to_image(_build_qr_like_matrix())
-    payload = decode_and_redraw(source)
-    assert payload == [[True, False], [False, True]]
-
-
-def test_decode_and_redraw_raises_when_not_decodable(monkeypatch):
-    """验证 decode_and_redraw 在无法解码时抛 ValueError."""
-
-    class _FakeQRCode:
-        def __init__(self, **_kwargs):
-            pass
-
-        def add_data(self, _data):
-            pass
-
-        def make(self, fit: bool = True):
-            _ = fit
-
-        def get_matrix(self):
-            return [[True, False], [False, True]]
-
-    class _FakePyzarb:
-        @staticmethod
-        def decode(_raw):
-            return []
-
-    monkeypatch.setattr(terminal_qrcode, "_qrcode", _make_fake_qrcode_module(_FakeQRCode))
-    monkeypatch.setattr(terminal_qrcode, "_pyzbar", _make_fake_pyzbar_module(_FakePyzarb.decode))
-    source = _render_matrix_to_image(_build_qr_like_matrix())
-    with pytest.raises(ValueError, match="Failed to decode QR payload"):
-        _ = decode_and_redraw(source)
-
-
-def test_decode_and_redraw_requires_pyzbar_dependency(monkeypatch):
-    """验证 decode_and_redraw 缺少 pyzbar 依赖会报错."""
-
-    class _FakeQRCode:
-        def __init__(self, **_kwargs):
-            pass
-
-        def add_data(self, _data):
-            pass
-
-        def make(self, fit: bool = True):
-            _ = fit
-
-        def get_matrix(self):
-            return [[True, False], [False, True]]
-
-    monkeypatch.setattr(terminal_qrcode, "_qrcode", _make_fake_qrcode_module(_FakeQRCode))
-    monkeypatch.setattr(terminal_qrcode, "_pyzbar", None)
-    source = _render_matrix_to_image(_build_qr_like_matrix())
-    with pytest.raises(RuntimeError, match="\\[pyzbar\\]"):
-        _ = decode_and_redraw(source)

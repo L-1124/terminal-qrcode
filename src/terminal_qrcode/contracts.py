@@ -3,7 +3,7 @@
 from collections.abc import Generator
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Literal, Protocol, TypeAlias, runtime_checkable
+from typing import Any, Literal, Protocol, TypeAlias, runtime_checkable
 
 from terminal_qrcode.simple_image import SimpleImage
 
@@ -77,7 +77,16 @@ class ImageProtocol(Protocol):
         ...
 
 
-ImageInput = SimpleImage | ImageProtocol | Matrix
+@runtime_checkable
+class ImageWrapperProtocol(Protocol):
+    """包装图像协议（兼容 qrcode.image.BaseImage 等包装器）."""
+
+    def get_image(self, **kwargs) -> Any:
+        """返回内部图像对象."""
+        ...
+
+
+ImageInput = SimpleImage | ImageProtocol | ImageWrapperProtocol | Matrix
 
 
 @dataclass(frozen=True)

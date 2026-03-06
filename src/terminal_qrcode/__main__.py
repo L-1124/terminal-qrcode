@@ -5,7 +5,7 @@ import logging
 import os
 import sys
 
-from terminal_qrcode import draw, generate
+from terminal_qrcode import draw
 
 
 def main():
@@ -15,11 +15,6 @@ def main():
         "image_path",
         nargs="?",
         help="图片路径",
-    )
-    parser.add_argument(
-        "-d",
-        "--data",
-        help="二维码内容；传入 '-' 时从标准输入读取",
     )
     parser.add_argument(
         "-r",
@@ -83,39 +78,23 @@ def main():
         except Exception:  # noqa: BLE001
             pass
 
-    has_image_path = bool(args.image_path)
-    has_data = args.data is not None
-    if has_image_path and has_data:
-        parser.error("image_path 与 --data 不能同时使用")
-    if not has_image_path and not has_data:
-        parser.error("必须提供 image_path 或 --data/-d")
+    if not args.image_path:
+        parser.error("必须提供 image_path")
 
     try:
-        if has_data:
-            text = sys.stdin.read() if args.data == "-" else args.data
-            output = generate(
-                text,
-                renderer=args.renderer,
-                repair=args.repair,
-                invert=args.invert,
-                fit=args.fit,
-                max_cols=args.max_cols,
-                img_width=args.img_width,
-            )
-        else:
-            image_path = args.image_path
-            if not os.path.isfile(image_path):
-                sys.stderr.write(f"Error: Image file not found at '{image_path}'\n")
-                sys.exit(1)
-            output = draw(
-                image_path,
-                renderer=args.renderer,
-                repair=args.repair,
-                invert=args.invert,
-                fit=args.fit,
-                max_cols=args.max_cols,
-                img_width=args.img_width,
-            )
+        image_path = args.image_path
+        if not os.path.isfile(image_path):
+            sys.stderr.write(f"Error: Image file not found at '{image_path}'\n")
+            sys.exit(1)
+        output = draw(
+            image_path,
+            renderer=args.renderer,
+            repair=args.repair,
+            invert=args.invert,
+            fit=args.fit,
+            max_cols=args.max_cols,
+            img_width=args.img_width,
+        )
 
         sys.stdout.write(str(output))
         sys.stdout.flush()

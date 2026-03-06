@@ -2,13 +2,13 @@
 
 import dataclasses
 from collections.abc import Generator
-from types import ModuleType
 from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
 
 from terminal_qrcode.contracts import (
     ColorLevelName,
     ImageInput,
     ImageProtocol,
+    ImageWrapperProtocol,
     Matrix,
     RenderConfig,
     Renderer,
@@ -115,7 +115,9 @@ def _to_simple_image(payload: ImageInput) -> SimpleImage:
     if isinstance(payload, SimpleImage):
         return payload
     if not isinstance(payload, ImageProtocol):
-        raise TypeError("payload must be a SimpleImage or ImageProtocol instance.")
+        payload = _unwrap_image_payload(payload)
+    if isinstance(payload, SimpleImage):
+        return payload
 
     image_obj: ImageProtocol = payload
     mode_raw = image_obj.mode
@@ -137,6 +139,22 @@ def _to_simple_image(payload: ImageInput) -> SimpleImage:
         raise TypeError("payload image bytes length does not match size and mode.")
 
     return SimpleImage(mode, (width, height), data)
+
+
+def _unwrap_image_payload(payload: ImageInput) -> SimpleImage | ImageProtocol:
+    """解包包装图像对象."""
+    if isinstance(payload, SimpleImage):
+        return payload
+    if isinstance(payload, ImageProtocol):
+        return payload
+    if isinstance(payload, ImageWrapperProtocol):
+        inner = payload.get_image()
+        if isinstance(inner, SimpleImage):
+            return inner
+        if isinstance(inner, ImageProtocol):
+            return inner
+        raise TypeError("payload get_image() must return a SimpleImage or ImageProtocol instance.")
+    raise TypeError("payload must be a SimpleImage, ImageProtocol, or image wrapper instance.")
 
 
 def _validate_matrix_shape(matrix: Matrix) -> None:
@@ -213,40 +231,6 @@ def _resolve_render_payload(request: RenderRequest, capability: TerminalCapabili
             raise ValueError("Failed to decode QR matrix from image. Input must be a valid machine-generated QR code.")
         return image_payload
     return _to_render_matrix(payload, config)
-
-
-def decode_request_to_matrix(
-    request: RenderRequest,
-    *,
-    qrcode_module: ModuleType,
-    pyzbar_module: ModuleType,
-) -> Matrix:
-    """先解码二维码内容，再重建二维码矩阵."""
-    payload = request.payload
-    image = payload if isinstance(payload, SimpleImage) else _to_simple_image(payload)
-    luma = image if image.mode == "L" else image.convert("L")
-    decoded = pyzbar_module.decode((bytes(luma._data), luma.width, luma.height))
-    if not decoded:
-        raise ValueError("Failed to decode QR payload from image.")
-
-    result = None
-    for item in decoded:
-        kind = str(getattr(item, "type", "")).upper()
-        if kind in {"", "QRCODE"}:
-            result = item
-            break
-    if result is None:
-        raise ValueError("Decoded symbols do not contain a QRCode payload.")
-
-    qr = qrcode_module.QRCode(
-        version=None,
-        error_correction=qrcode_module.constants.ERROR_CORRECT_M,
-        box_size=1,
-        border=4,
-    )
-    qr.add_data(getattr(result, "data", b""))
-    qr.make(fit=True)
-    return [list(row) for row in qr.get_matrix()]
 
 
 def run_pipeline(request: RenderRequest) -> Generator[str, None, None]:

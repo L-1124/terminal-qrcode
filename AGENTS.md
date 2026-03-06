@@ -11,10 +11,8 @@
 
 ## Setup commands
 
-- 安装依赖：`uv sync`
-- 验证环境：`uv run python -c "import terminal_qrcode; print(terminal_qrcode.__version__)"`
-- 本地开发：`uv pip install -e .`
-- 运行 CLI：`uv run python -m terminal_qrcode --help`
+- 本地开发：`uv sync`
+- 运行 CLI：`uv run terminal_qrcode --help`
 
 ## Testing instructions
 
@@ -41,29 +39,18 @@
 - 自动修复：`uv run ruff check . --fix`
 - 代码格式：`uv run ruff format .`
 - 类型检查：`uv run pyrefly check`（扫描 `src/`）
-- 行宽 120，目标 py310，规则 `E F I N UP B A D C4 T20 RET`（忽略 D203, D212）
 
 ### Code style rules
 
-- **T20**: 源代码禁止 `print()`，仅 `__main__.py` 允许 `# noqa: T201`
 - **Import**: 标准库 → 第三方 → 本地 (`from . import ...`)
 - **Docstring**: Google Style，中文，记录 Args/Returns/Raises
-- **Type hints**: 禁止 `as Any` 或 `@type: ignore`，例外是 `probe.py` 中 POSIX 库 (`termios`、`tty`)
-
-```python
-# probe.py 中 POSIX 库的处理
-try:
-    import termios  # type: ignore[import-not-found]
-except ImportError:
-    termios: Any = None
-```
+- **Type hints**: 非必要需要完善的类型提示，禁止使用`future`导入，Python 3.10+ 原生支持
 
 ## Key conventions
 
 - **POSIX 兼容**：`probe.py` 中 `termios`/`tty` 仅 UNIX 可用，Windows 通过 `try/except ImportError` 处理，用 `Any` 类型标注——此为有意设计
 - **图像解码**：PNG/JPEG/WEBP 通过 `_cimage` 使用静态链接后端，发布 wheel 时会打包所需 lib，不依赖运行时外部 `djpeg`
 - **Tmux 穿透**：渲染器必须检查 `TMUX` 环境变量，需双重转义 `\x1bPtmux;...\x1b\\`
-- **CLI 设计**：无 `[project.scripts]` 入口点，仅通过 `python -m terminal_qrcode` 运行
 
 ## PR instructions
 
