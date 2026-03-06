@@ -1,4 +1,4 @@
-"""命令行接口模块."""
+"""开发测试用命令行工具."""
 
 import argparse
 import json
@@ -6,8 +6,8 @@ import logging
 import os
 import sys
 
-from . import draw
-from .probe import TerminalProbe
+from terminal_qrcode import draw
+from terminal_qrcode.probe import TerminalProbe
 
 
 def main():
@@ -61,7 +61,6 @@ def main():
 
     args = parser.parse_args()
 
-    # 初始化日志
     if args.debug:
         logging.basicConfig(
             level=logging.DEBUG,

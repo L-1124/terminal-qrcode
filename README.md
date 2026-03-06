@@ -62,20 +62,20 @@ print(str(raw))
 ## 🔧 CLI
 
 ```bash
-python -m terminal_qrcode <image_path> [options]
+uv run python scripts/cli.py <image_path> [options]
 ```
 
 仅探测当前终端能力：
 
 ```bash
-python -m terminal_qrcode --detect
+uv run python scripts/cli.py --detect
 ```
 
 常见渲染选项：
 
 ```bash
-python -m terminal_qrcode qrcode.png --renderer halfblock
-python -m terminal_qrcode qrcode.png --renderer auto --repair strict
+uv run python scripts/cli.py qrcode.png --renderer halfblock
+uv run python scripts/cli.py qrcode.png --renderer auto
 ```
 
 ## 🛠️ 本地开发
@@ -87,7 +87,7 @@ uv sync
 Windows
 
 ```bash
-uv run --no-project python tools/bootstrap_deps.py
+uv run --no-project python scripts/install-dev.py
 uv sync
 ```
 

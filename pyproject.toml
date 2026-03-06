@@ -6,7 +6,6 @@ requires-python = ">=3.10"
 authors = [
   { name = "Luren", email = "68656403+luren-dc@users.noreply.github.com" }
 ]
-scripts = { "terminal-qrcode" = "terminal_qrcode.__main__:main" }
 dependencies = [
   "colorama>=0.4.6",
 ]
@@ -80,7 +79,15 @@ select = [
   "T20",
   "RET",
 ]
-ignore = ["D203", "D212"]
+ignore = [
+  "D203",
+  "D212",
+]
+per-file-ignores = { "scripts/*" = [
+  "D100",
+  "D104",
+  "T201",
+] }
 
 [tool.setuptools]
 include-package-data = false
