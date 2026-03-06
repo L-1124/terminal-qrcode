@@ -106,5 +106,5 @@ version = { attr = "terminal_qrcode.__version__" }
 cache-keys = [
   { file = "pyproject.toml" },
   { file = "src/**/*.py" },
-  { file = "src/**/*.c" },
+  { file = "src/native/**/*.c" },
 ]
