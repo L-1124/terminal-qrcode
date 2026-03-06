@@ -4,15 +4,15 @@ from collections.abc import Iterable, Iterator
 from pathlib import Path
 from typing import overload
 
-from terminal_qrcode import core
-from terminal_qrcode.contracts import (
+from . import core
+from .contracts import (
     ColorLevelName,
     HalfBlockMode,
     ImageInput,
     RendererOption,
     RepairMode,
 )
-from terminal_qrcode.simple_image import SimpleImage
+from .simple_image import SimpleImage
 
 __version__ = "0.1.1"
 
@@ -184,7 +184,7 @@ def draw(
     Examples:
         直接输出完整结果:
 
-        >>> from terminal_qrcode import draw
+        >>> from  import draw
         >>> print(draw("qrcode.png"))
 
         以分片流式处理输出:

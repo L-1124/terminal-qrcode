@@ -2,10 +2,10 @@
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Literal, TypeAlias, cast
+from typing import Literal, cast
 
-from terminal_qrcode import _cimage
-from terminal_qrcode.codecs import (
+from . import _cimage
+from .codecs import (
     PngDecodeError,
     PngEncodeError,
     TurboJpegDecodeError,
@@ -15,11 +15,7 @@ from terminal_qrcode.codecs import (
     decode_webp_rgba,
     encode_png_with_libpng,
 )
-
-if TYPE_CHECKING:
-    from terminal_qrcode._cimage import PixelMode
-else:
-    PixelMode: TypeAlias = Literal["L", "RGB", "RGBA"]
+from .contracts import PixelMode
 
 
 @dataclass(frozen=True)

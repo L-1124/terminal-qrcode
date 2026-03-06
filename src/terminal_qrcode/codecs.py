@@ -1,11 +1,7 @@
 """图像编解码后端整合模块（纯 C 扩展实现）."""
 
-from typing import TYPE_CHECKING
-
-from terminal_qrcode import _cimage
-
-if TYPE_CHECKING:
-    from terminal_qrcode._cimage import PixelMode
+from . import _cimage
+from .contracts import PixelMode
 
 __all__ = [
     "PngDecodeError",

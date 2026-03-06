@@ -5,7 +5,7 @@ import logging
 import os
 import sys
 
-from terminal_qrcode import draw
+from . import draw
 
 
 def main():

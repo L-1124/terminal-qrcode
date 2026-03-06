@@ -11,8 +11,8 @@ from typing import Generic, TypeVar
 
 from colorama import just_fix_windows_console
 
-from terminal_qrcode.contracts import ColorLevelName, Matrix, RenderConfig, Renderer, TerminalCapability
-from terminal_qrcode.layout import (
+from .contracts import ColorLevelName, Matrix, RenderConfig, Renderer, TerminalCapability
+from .layout import (
     _build_fit_plan,
     _cells_to_pixels,
     _get_cell_pixel_size,
@@ -22,7 +22,7 @@ from terminal_qrcode.layout import (
     _threshold_to_bits,
     _upscale_matrix_nn,
 )
-from terminal_qrcode.simple_image import SimpleImage
+from .simple_image import SimpleImage
 
 logger = logging.getLogger(__name__)
 
@@ -37,6 +37,7 @@ def _ensure_colorama_console() -> None:
 
 
 _SGR_RESET = "\x1b[0m"
+_HALFBLOCK_CHARS = (" ", "▄", "▀", "█")
 
 
 def _halfblock_sgr(color_level: ColorLevelName, fg_dark: bool, bg_dark: bool) -> str:
@@ -52,6 +53,19 @@ def _halfblock_sgr(color_level: ColorLevelName, fg_dark: bool, bg_dark: bool) ->
     fg = "38;2;0;0;0" if fg_dark else "38;2;255;255;255"
     bg = "48;2;0;0;0" if bg_dark else "48;2;255;255;255"
     return f"\x1b[{fg};{bg}m"
+
+
+@lru_cache(maxsize=4)
+def _halfblock_palette(color_level: ColorLevelName) -> tuple[str, str, str, str]:
+    """按颜色等级预计算四种 top/bottom 组合的输出片段."""
+    if color_level == "none":
+        return _HALFBLOCK_CHARS
+    return (
+        f"{_halfblock_sgr(color_level, fg_dark=False, bg_dark=False)}▀",
+        f"{_halfblock_sgr(color_level, fg_dark=False, bg_dark=True)}▀",
+        f"{_halfblock_sgr(color_level, fg_dark=True, bg_dark=False)}▀",
+        f"{_halfblock_sgr(color_level, fg_dark=True, bg_dark=True)}▀",
+    )
 
 
 @lru_cache(maxsize=1)
@@ -206,6 +220,10 @@ class HalfBlockRenderer:
 
         lines_per_chunk = 50
         buffer_pool: list[str] = []
+        palette = _halfblock_palette(color_level)
+        color_enabled = color_level != "none"
+        if color_enabled:
+            _ensure_colorama_console()
 
         for i in range(0, len(rows), 2):
             row_top = rows[i]
@@ -216,22 +234,11 @@ class HalfBlockRenderer:
                 if invert_for_render:
                     top, bottom = not top, not bottom
 
-                if color_level == "none":
-                    if top and bottom:
-                        line_chars.append("█")
-                    elif top:
-                        line_chars.append("▀")
-                    elif bottom:
-                        line_chars.append("▄")
-                    else:
-                        line_chars.append(" ")
-                    continue
-
-                _ensure_colorama_console()
-                line_chars.append(f"{_halfblock_sgr(color_level, fg_dark=top, bg_dark=bottom)}▀")
+                index = (int(top) << 1) | int(bottom)
+                line_chars.append(palette[index])
 
             line = "".join(line_chars)
-            if color_level != "none":
+            if color_enabled:
                 line = f"{line}{_SGR_RESET}"
             buffer_pool.append(line)
             if len(buffer_pool) >= lines_per_chunk:

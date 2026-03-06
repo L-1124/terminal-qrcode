@@ -11,7 +11,7 @@ from collections.abc import Generator
 from dataclasses import dataclass
 from typing import Any
 
-from terminal_qrcode.contracts import TerminalCapabilities, TerminalCapability, TerminalColorLevel
+from .contracts import TerminalCapabilities, TerminalCapability, TerminalColorLevel
 
 logger = logging.getLogger(__name__)
 

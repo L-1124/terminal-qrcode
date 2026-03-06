@@ -3,15 +3,17 @@
 from collections.abc import Generator
 from dataclasses import dataclass
 from enum import Enum, auto
-from typing import Any, Literal, Protocol, TypeAlias, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias, runtime_checkable
 
-from terminal_qrcode.simple_image import SimpleImage
+if TYPE_CHECKING:
+    from .simple_image import SimpleImage
 
 RendererOption = Literal["auto", "kitty", "iterm2", "wezterm", "sixel", "halfblock"]
 HalfBlockMode = Literal["precision", "area"]
 ColorLevelName = Literal["auto", "none", "ansi16", "ansi256", "truecolor"]
 RepairMode = Literal["off", "best_effort", "strict"]
 Matrix: TypeAlias = list[list[bool]]
+PixelMode: TypeAlias = Literal["L", "RGB", "RGBA"]
 
 
 @dataclass(frozen=True)
@@ -86,7 +88,7 @@ class ImageWrapperProtocol(Protocol):
         ...
 
 
-ImageInput = SimpleImage | ImageProtocol | ImageWrapperProtocol | Matrix
+ImageInput: TypeAlias = "SimpleImage | ImageProtocol | ImageWrapperProtocol | Matrix"
 
 
 @dataclass(frozen=True)

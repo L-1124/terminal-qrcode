@@ -6,9 +6,9 @@ from dataclasses import dataclass
 from shutil import get_terminal_size
 from typing import Any, Literal
 
-from terminal_qrcode import _cimage
-from terminal_qrcode.contracts import RenderConfig
-from terminal_qrcode.simple_image import SimpleImage
+from . import _cimage
+from .contracts import RenderConfig
+from .simple_image import SimpleImage
 
 if sys.platform != "win32":
     import fcntl

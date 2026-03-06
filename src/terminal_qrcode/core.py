@@ -2,14 +2,15 @@
 
 import dataclasses
 from collections.abc import Generator
-from typing import TYPE_CHECKING, Any, Literal, TypeAlias, cast
+from typing import Any, cast
 
-from terminal_qrcode.contracts import (
+from .contracts import (
     ColorLevelName,
     ImageInput,
     ImageProtocol,
     ImageWrapperProtocol,
     Matrix,
+    PixelMode,
     RenderConfig,
     Renderer,
     RenderRequest,
@@ -17,18 +18,13 @@ from terminal_qrcode.contracts import (
     TerminalCapability,
     TerminalColorLevel,
 )
-from terminal_qrcode.layout import _pad_border
-from terminal_qrcode.qr_restore import strict_restore_qr_matrix
-from terminal_qrcode.renderers import (
+from .layout import _pad_border
+from .qr_restore import strict_restore_qr_matrix
+from .renderers import (
     RendererRegistry,
     build_default_renderer_registry,
 )
-from terminal_qrcode.simple_image import SimpleImage
-
-if TYPE_CHECKING:
-    from terminal_qrcode._cimage import PixelMode
-else:
-    PixelMode: TypeAlias = Literal["L", "RGB", "RGBA"]
+from .simple_image import SimpleImage
 
 DEFAULT_RENDERER_REGISTRY: RendererRegistry[Renderer] = build_default_renderer_registry()
 _MODE_CHANNELS: dict[PixelMode, int] = {"L": 1, "RGB": 3, "RGBA": 4}
@@ -58,7 +54,7 @@ def _resolve_capability(config: RenderConfig) -> TerminalCapability:
         return TerminalCapability.FALLBACK
 
     # 延迟导入，避免与 probe.py 形成模块初始化循环。
-    from terminal_qrcode.probe import TerminalProbe
+    from .probe import TerminalProbe
 
     probe = TerminalProbe()
     return probe.probe(timeout=config.timeout)
@@ -72,7 +68,7 @@ def _resolve_terminal_capabilities(config: RenderConfig) -> TerminalCapabilities
             color_level=TerminalColorLevel[config.color_level.upper()],
         )
 
-    from terminal_qrcode.probe import TerminalProbe
+    from .probe import TerminalProbe
 
     probe = TerminalProbe()
     if config.renderer != "auto":

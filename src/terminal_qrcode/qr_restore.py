@@ -2,10 +2,10 @@
 
 import math
 
-from terminal_qrcode import _cimage
-from terminal_qrcode.contracts import Matrix, RenderConfig
-from terminal_qrcode.layout import _to_luma_bits
-from terminal_qrcode.simple_image import SimpleImage
+from . import _cimage
+from .contracts import Matrix, RenderConfig
+from .layout import _to_luma_bits
+from .simple_image import SimpleImage
 
 _MIN_QR_SIZE = 21
 _MAX_QR_SIZE = 177
