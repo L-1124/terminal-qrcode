@@ -32,17 +32,34 @@ _MODE_CHANNELS: dict[PixelMode, int] = {"L": 1, "RGB": 3, "RGBA": 4}
 
 def _merge_config(config: RenderConfig | None, overrides: dict[str, object]) -> RenderConfig:
     """合并基础配置与扁平覆盖参数."""
-    base_config = config or RenderConfig()
+    base = config or RenderConfig()
     cleaned = {k: v for k, v in overrides.items() if v is not None}
     if not cleaned:
-        return base_config
-    return dataclasses.replace(base_config, **cast(dict[str, Any], cleaned))
+        return base
+
+    qr_fields = {"scale", "repair", "border", "finder_variance", "restore_window", "invert"}
+    layout_fields = {"fit", "max_cols", "img_width", "halfblock_mode"}
+    probe_fields = {"renderer", "timeout", "color_level", "tmux_passthrough"}
+
+    qr_overrides = {k: v for k, v in cleaned.items() if k in qr_fields}
+    layout_overrides = {k: v for k, v in cleaned.items() if k in layout_fields}
+    probe_overrides = {k: v for k, v in cleaned.items() if k in probe_fields}
+
+    new_qr = dataclasses.replace(base.qr, **cast(dict[str, Any], qr_overrides)) if qr_overrides else base.qr
+    new_layout = (
+        dataclasses.replace(base.layout, **cast(dict[str, Any], layout_overrides)) if layout_overrides else base.layout
+    )
+    new_probe = (
+        dataclasses.replace(base.probe, **cast(dict[str, Any], probe_overrides)) if probe_overrides else base.probe
+    )
+
+    return RenderConfig(qr=new_qr, layout=new_layout, probe=new_probe)
 
 
 def _resolve_capability(config: RenderConfig) -> TerminalCapability:
     """解析最终渲染能力."""
-    if config.renderer != "auto":
-        renderer = config.renderer.lower()
+    if config.probe.renderer != "auto":
+        renderer = config.probe.renderer.lower()
         if renderer == "kitty":
             return TerminalCapability.KITTY
         if renderer == "wezterm":
@@ -53,50 +70,49 @@ def _resolve_capability(config: RenderConfig) -> TerminalCapability:
             return TerminalCapability.ITERM2
         return TerminalCapability.FALLBACK
 
-    # 延迟导入，避免与 probe.py 形成模块初始化循环。
     from .probe import TerminalProbe
 
     probe = TerminalProbe()
-    return probe.probe(timeout=config.timeout)
+    return probe.probe(timeout=config.probe.timeout)
 
 
 def _resolve_terminal_capabilities(config: RenderConfig) -> TerminalCapabilities:
     """解析最终终端能力快照."""
-    if config.renderer != "auto" and config.color_level != "auto":
+    if config.probe.renderer != "auto" and config.probe.color_level != "auto":
         return TerminalCapabilities(
             capability=_resolve_capability(config),
-            color_level=TerminalColorLevel[config.color_level.upper()],
+            color_level=TerminalColorLevel[config.probe.color_level.upper()],
         )
 
     from .probe import TerminalProbe
 
     probe = TerminalProbe()
-    if config.renderer != "auto":
+    if config.probe.renderer != "auto":
         return TerminalCapabilities(
             capability=_resolve_capability(config),
-            color_level=probe.probe_color(timeout=config.timeout),
+            color_level=probe.probe_color(timeout=config.probe.timeout),
         )
-    if config.color_level != "auto":
+    if config.probe.color_level != "auto":
         return TerminalCapabilities(
-            capability=probe.probe(timeout=config.timeout),
-            color_level=TerminalColorLevel[config.color_level.upper()],
+            capability=probe.probe(timeout=config.probe.timeout),
+            color_level=TerminalColorLevel[config.probe.color_level.upper()],
         )
-    return probe.capabilities(timeout=config.timeout)
+    return probe.capabilities(timeout=config.probe.timeout)
 
 
 def _validate_config(config: RenderConfig) -> None:
     """验证关键渲染配置的合法性."""
-    if config.img_width is not None and config.img_width <= 0:
+    if config.layout.img_width is not None and config.layout.img_width <= 0:
         raise ValueError("img_width must be greater than 0.")
-    if config.max_cols is not None and config.max_cols <= 0:
+    if config.layout.max_cols is not None and config.layout.max_cols <= 0:
         raise ValueError("max_cols must be greater than 0 when provided.")
-    if config.renderer not in {"auto", "kitty", "iterm2", "wezterm", "sixel", "halfblock"}:
+    if config.probe.renderer not in {"auto", "kitty", "iterm2", "wezterm", "sixel", "halfblock"}:
         raise ValueError("renderer must be one of: auto, kitty, iterm2, wezterm, sixel, halfblock.")
-    if config.border < 0:
+    if config.qr.border < 0:
         raise ValueError("border must be >= 0.")
-    if config.finder_variance <= 0:
+    if config.qr.finder_variance <= 0:
         raise ValueError("finder_variance must be greater than 0.")
-    if config.restore_window < 1 or config.restore_window % 2 == 0:
+    if config.qr.restore_window < 1 or config.qr.restore_window % 2 == 0:
         raise ValueError("restore_window must be an odd integer greater than or equal to 1.")
 
 
@@ -171,7 +187,7 @@ def _to_render_matrix(payload: ImageInput, config: RenderConfig) -> Matrix:
     matrix = _restore_qr_matrix(image, config)
     if matrix is None:
         raise ValueError("Failed to decode QR matrix from image. Input must be a valid machine-generated QR code.")
-    return _pad_border(matrix, config.border)
+    return _pad_border(matrix, config.qr.border)
 
 
 def _restore_qr_matrix(image: SimpleImage, config: RenderConfig) -> Matrix | None:
@@ -226,7 +242,8 @@ def run_pipeline(request: RenderRequest) -> Generator[str, None, None]:
     terminal_capabilities = _resolve_terminal_capabilities(final_config)
     capability = terminal_capabilities.capability
     final_color_level = _coerce_color_level(terminal_capabilities.color_level)
-    final_config = dataclasses.replace(final_config, color_level=final_color_level)
+    new_probe = dataclasses.replace(final_config.probe, color_level=final_color_level)
+    final_config = dataclasses.replace(final_config, probe=new_probe)
     request = dataclasses.replace(request, config=final_config)
     render_payload = _resolve_render_payload(request, capability)
     renderer = DEFAULT_RENDERER_REGISTRY.get(capability)

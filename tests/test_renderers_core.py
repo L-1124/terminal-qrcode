@@ -4,11 +4,20 @@ import base64
 import os
 from collections.abc import Generator
 from pathlib import Path
+from typing import Literal
 from unittest.mock import patch
 
 import pytest
 
 from terminal_qrcode import layout, qr_restore
+from terminal_qrcode.contracts import (
+    ColorLevelName,
+    LayoutConfig,
+    ProbeConfig,
+    QRConfig,
+    RendererOption,
+    RepairMode,
+)
 from terminal_qrcode.core import DEFAULT_RENDERER_REGISTRY, RenderConfig, Renderer, TerminalCapability
 from terminal_qrcode.renderers import HalfBlockRenderer, ITerm2Renderer, KittyRenderer, SixelRenderer, WezTermRenderer
 from terminal_qrcode.simple_image import SimpleImage
@@ -62,6 +71,47 @@ def _render_matrix_to_image(
     return img
 
 
+def _render_config(
+    *,
+    scale: int = 8,
+    repair: RepairMode = "strict",
+    border: int = 2,
+    finder_variance: float = 0.8,
+    restore_window: int = 3,
+    invert: bool | None = None,
+    fit: bool = True,
+    max_cols: int | None = None,
+    img_width: int | None = None,
+    halfblock_mode: Literal["precision", "area"] = "precision",
+    renderer: RendererOption = "auto",
+    timeout: float = 0.1,
+    color_level: ColorLevelName = "auto",
+    tmux_passthrough: Literal["auto", "always", "never"] = "auto",
+) -> RenderConfig:
+    return RenderConfig(
+        qr=QRConfig(
+            scale=scale,
+            repair=repair,
+            border=border,
+            finder_variance=finder_variance,
+            restore_window=restore_window,
+            invert=invert,
+        ),
+        layout=LayoutConfig(
+            fit=fit,
+            max_cols=max_cols,
+            img_width=img_width,
+            halfblock_mode=halfblock_mode,
+        ),
+        probe=ProbeConfig(
+            renderer=renderer,
+            timeout=timeout,
+            color_level=color_level,
+            tmux_passthrough=tmux_passthrough,
+        ),
+    )
+
+
 def test_renderer_protocol():
     """验证自定义渲染器符合 Renderer 协议."""
 
@@ -76,15 +126,15 @@ def test_renderer_protocol():
 def test_render_config_defaults():
     """验证渲染配置核心默认值."""
     config = RenderConfig()
-    assert config.scale == 8
-    assert config.renderer == "auto"
-    assert config.repair == "strict"
-    assert config.invert is None
-    assert config.fit is True
-    assert config.max_cols is None
-    assert config.img_width is None
-    assert config.halfblock_mode == "precision"
-    assert config.border == 2
+    assert config.qr.scale == 8
+    assert config.probe.renderer == "auto"
+    assert config.qr.repair == "strict"
+    assert config.qr.invert is None
+    assert config.layout.fit is True
+    assert config.layout.max_cols is None
+    assert config.layout.img_width is None
+    assert config.layout.halfblock_mode == "precision"
+    assert config.qr.border == 2
 
 
 def test_halfblock_fit_false_rejects_lossy_downscale():
@@ -92,7 +142,7 @@ def test_halfblock_fit_false_rejects_lossy_downscale():
     matrix = _build_qr_like_matrix(size=25)
     renderer = HalfBlockRenderer()
     with pytest.raises(ValueError, match="Refusing lossy halfblock downscale"):
-        _ = "".join(renderer.render(matrix, RenderConfig(fit=False, img_width=10, color_level="none")))
+        _ = "".join(renderer.render(matrix, _render_config(fit=False, img_width=10, color_level="none")))
 
 
 def test_halfblock_fit_true_rejects_too_narrow_terminal(monkeypatch):
@@ -101,13 +151,14 @@ def test_halfblock_fit_true_rejects_too_narrow_terminal(monkeypatch):
     matrix = _build_qr_like_matrix(size=37)
     renderer = HalfBlockRenderer()
     with pytest.raises(ValueError, match="too narrow to render scannable QR"):
-        _ = "".join(renderer.render(matrix, RenderConfig(fit=True, color_level="none")))
+        _ = "".join(renderer.render(matrix, _render_config(fit=True, color_level="none")))
 
 
 def test_halfblock_color_level_none_keeps_plain_halfblocks():
     """验证 color_level=none 不输出 ANSI 序列."""
     matrix = [[True, False, True], [False, True, False]]
-    output = "".join(HalfBlockRenderer().render(matrix, RenderConfig(fit=False, img_width=10, color_level="none")))
+    config = _render_config(fit=False, img_width=10, color_level="none")
+    output = "".join(HalfBlockRenderer().render(matrix, config))
     assert "\x1b[" not in output
     assert any(c in output for c in ("█", "▀", "▄", " "))
 
@@ -115,7 +166,8 @@ def test_halfblock_color_level_none_keeps_plain_halfblocks():
 def test_halfblock_color_level_ansi16_contains_sgr_sequences():
     """验证 ansi16 等级下输出 ANSI 序列."""
     matrix = [[True, False], [False, True]]
-    output = "".join(HalfBlockRenderer().render(matrix, RenderConfig(fit=False, img_width=10, color_level="ansi16")))
+    config = _render_config(fit=False, img_width=10, color_level="ansi16")
+    output = "".join(HalfBlockRenderer().render(matrix, config))
     assert "\x1b[" in output
     assert "▀" in output
 
@@ -199,7 +251,7 @@ def test_to_render_matrix_applies_border_for_image_input():
 
     matrix = _build_qr_like_matrix(size=25)
     image = _render_matrix_to_image(matrix, module=4, quiet=4)
-    result = _to_render_matrix(image, RenderConfig(border=3))
+    result = _to_render_matrix(image, _render_config(border=3))
     assert len(result) == len(result[0])
     assert len(result) > 25
     assert all(v is False for v in result[0])
@@ -209,8 +261,9 @@ def test_to_render_matrix_applies_border_for_image_input():
 def test_halfblock_invert_behavior():
     """验证半块渲染 invert 行为."""
     matrix = [[True, True], [True, True]]
-    out_default = "".join(HalfBlockRenderer().render(matrix, RenderConfig(img_width=2, color_level="none")))
-    out_invert = "".join(HalfBlockRenderer().render(matrix, RenderConfig(img_width=2, invert=True, color_level="none")))
+    out_default = "".join(HalfBlockRenderer().render(matrix, _render_config(img_width=2, color_level="none")))
+    config_invert = _render_config(img_width=2, invert=True, color_level="none")
+    out_invert = "".join(HalfBlockRenderer().render(matrix, config_invert))
     assert "█" in out_default
     assert "█" not in out_invert
 
@@ -218,7 +271,7 @@ def test_halfblock_invert_behavior():
 def test_halfblock_renderer_streaming():
     """验证 HalfBlockRenderer 返回生成器分片."""
     renderer = HalfBlockRenderer()
-    result = renderer.render([[True, False], [False, True]], RenderConfig(invert=False, img_width=2))
+    result = renderer.render([[True, False], [False, True]], _render_config(invert=False, img_width=2))
     assert isinstance(result, Generator)
     chunks = list(result)
     assert len(chunks) > 0
@@ -269,7 +322,7 @@ def test_strict_restore_auto_polarity_corrects_inverted_input():
     """验证 invert=None 时自动极性判定可修正反相输入."""
     matrix = _build_qr_like_matrix(size=25)
     image = _render_matrix_to_image(matrix, module=4, quiet=4, invert=True)
-    restored = qr_restore.strict_restore_qr_matrix(image, RenderConfig(invert=None, finder_variance=1.2))
+    restored = qr_restore.strict_restore_qr_matrix(image, _render_config(invert=None, finder_variance=1.2))
     if restored is not None:
         assert qr_restore._finder_score(restored) >= 0.55
 
@@ -278,7 +331,7 @@ def test_strict_restore_invert_override_takes_priority():
     """验证显式 invert=True 覆盖自动极性判定."""
     matrix = _build_qr_like_matrix(size=25)
     image = _render_matrix_to_image(matrix, module=4, quiet=4)
-    restored = qr_restore.strict_restore_qr_matrix(image, RenderConfig(invert=True, finder_variance=1.2))
+    restored = qr_restore.strict_restore_qr_matrix(image, _render_config(invert=True, finder_variance=1.2))
     assert restored is not None
     assert 21 <= len(restored) <= 177
 
@@ -315,7 +368,7 @@ def test_non_tty_fallback_size_applied(monkeypatch):
 def test_fit_plan_safe_margin_applied(monkeypatch):
     """验证 FitPlan 基于安全边距后的网格预算计算."""
     monkeypatch.setattr(layout, "get_terminal_size", lambda fallback: os.terminal_size((20, 10)))
-    plan = layout._build_fit_plan(RenderConfig(fit=True), 20, 20)
+    plan = layout._build_fit_plan(_render_config(fit=True), 20, 20)
     assert plan.avail_cols == 19
     assert plan.avail_rows == 9
 
@@ -332,7 +385,7 @@ def test_kitty_fit_emits_column_constraint(monkeypatch):
     """验证 Kitty fit 输出包含列宽参数 c=."""
     monkeypatch.setattr(layout, "get_terminal_size", lambda fallback: os.terminal_size((18, 24)))
     matrix = _build_qr_like_matrix(size=21)
-    output = "".join(KittyRenderer().render(matrix, RenderConfig(fit=True)))
+    output = "".join(KittyRenderer().render(matrix, _render_config(fit=True)))
     assert "c=" in output
 
 
@@ -373,7 +426,7 @@ def test_renderer_registry_get():
 def test_kitty_renderer_tmux_auto_disabled_not_wrapped(_mock_allow):
     """验证 Kitty 在 tmux auto 且 passthrough 关闭时不包裹."""
     matrix = _build_qr_like_matrix(size=21)
-    output = "".join(KittyRenderer().render(matrix, RenderConfig(tmux_passthrough="auto")))
+    output = "".join(KittyRenderer().render(matrix, _render_config(tmux_passthrough="auto")))
     assert output.startswith("\x1b_G")
     assert "\x1bPtmux;" not in output
 
@@ -383,5 +436,5 @@ def test_kitty_renderer_tmux_auto_disabled_not_wrapped(_mock_allow):
 def test_sixel_renderer_tmux_always_forces_wrap(_mock_allow):
     """验证 Sixel 在 tmux always 时强制包裹."""
     matrix = _build_qr_like_matrix(size=21)
-    output = "".join(SixelRenderer().render(matrix, RenderConfig(tmux_passthrough="always")))
+    output = "".join(SixelRenderer().render(matrix, _render_config(tmux_passthrough="always")))
     assert output.startswith("\x1bPtmux;")

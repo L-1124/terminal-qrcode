@@ -17,23 +17,44 @@ PixelMode: TypeAlias = Literal["L", "RGB", "RGBA"]
 
 
 @dataclass(frozen=True)
-class RenderConfig:
-    """渲染配置项."""
+class QRConfig:
+    """QR 码生成与修复配置."""
 
     scale: int = 8
-    renderer: RendererOption = "auto"
     repair: RepairMode = "strict"
-    timeout: float = 0.1
+    border: int = 2
+    finder_variance: float = 0.8
+    restore_window: int = 3
     invert: bool | None = None
-    color_level: ColorLevelName = "auto"
+
+
+@dataclass(frozen=True)
+class LayoutConfig:
+    """终端布局与尺寸配置."""
+
     fit: bool = True
     max_cols: int | None = None
     img_width: int | None = None
     halfblock_mode: HalfBlockMode = "precision"
+
+
+@dataclass(frozen=True)
+class ProbeConfig:
+    """终端探测与渲染配置."""
+
+    renderer: RendererOption = "auto"
+    timeout: float = 0.1
+    color_level: ColorLevelName = "auto"
     tmux_passthrough: Literal["auto", "always", "never"] = "auto"
-    border: int = 2
-    finder_variance: float = 0.8
-    restore_window: int = 3
+
+
+@dataclass(frozen=True)
+class RenderConfig:
+    """渲染配置."""
+
+    qr: QRConfig = QRConfig()
+    layout: LayoutConfig = LayoutConfig()
+    probe: ProbeConfig = ProbeConfig()
 
 
 class TerminalCapability(Enum):

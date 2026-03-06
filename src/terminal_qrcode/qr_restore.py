@@ -147,7 +147,7 @@ def strict_restore_qr_matrix(image: SimpleImage, config: RenderConfig) -> Matrix
             matrix_legacy.append([b == 1 for b in sampled[start : start + size]])
         candidates.append(matrix_legacy)
 
-    finder_variance = max(0.1, config.finder_variance)
+    finder_variance = max(0.1, config.qr.finder_variance)
     for bits_for_scan in (bits, _invert_bits(bits)):
         centers = _cimage.find_finder_centers(bits_for_scan, luma.width, luma.height, finder_variance)
         if centers is None:
@@ -183,7 +183,7 @@ def strict_restore_qr_matrix(image: SimpleImage, config: RenderConfig) -> Matrix
             float(hy),
             float(vx),
             float(vy),
-            config.restore_window,
+            config.qr.restore_window,
         )
         matrix_affine: Matrix = []
         for i in range(size):
@@ -195,7 +195,7 @@ def strict_restore_qr_matrix(image: SimpleImage, config: RenderConfig) -> Matrix
         return None
 
     best_matrix = max(candidates, key=_matrix_score)
-    matrix = _auto_polarity(best_matrix, config.invert)
-    if config.invert is None and _finder_score(matrix) < _FINDER_SCORE_THRESHOLD:
+    matrix = _auto_polarity(best_matrix, config.qr.invert)
+    if config.qr.invert is None and _finder_score(matrix) < _FINDER_SCORE_THRESHOLD:
         return None
     return matrix

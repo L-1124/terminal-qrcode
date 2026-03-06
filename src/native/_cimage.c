@@ -1586,33 +1586,34 @@ collect_cross_runs_horizontal(const uint8_t *bits, int width, int height, int cx
 {
     int x;
     int c2 = 0, c1 = 0, c0 = 0, c3 = 0, c4 = 0;
+    int max_run = width / 3;
     if (!bit_at(bits, width, height, cx, cy)) return 0;
 
     x = cx;
     while (x >= 0 && bit_at(bits, width, height, x, cy)) {
-        c2++;
+        if (++c2 > max_run) return 0;
         x--;
     }
     while (x >= 0 && !bit_at(bits, width, height, x, cy)) {
-        c1++;
+        if (++c1 > max_run) return 0;
         x--;
     }
     while (x >= 0 && bit_at(bits, width, height, x, cy)) {
-        c0++;
+        if (++c0 > max_run) return 0;
         x--;
     }
 
     x = cx + 1;
     while (x < width && bit_at(bits, width, height, x, cy)) {
-        c2++;
+        if (++c2 > max_run) return 0;
         x++;
     }
     while (x < width && !bit_at(bits, width, height, x, cy)) {
-        c3++;
+        if (++c3 > max_run) return 0;
         x++;
     }
     while (x < width && bit_at(bits, width, height, x, cy)) {
-        c4++;
+        if (++c4 > max_run) return 0;
         x++;
     }
 
@@ -1629,33 +1630,34 @@ collect_cross_runs_vertical(const uint8_t *bits, int width, int height, int cx, 
 {
     int y;
     int c2 = 0, c1 = 0, c0 = 0, c3 = 0, c4 = 0;
+    int max_run = height / 3;
     if (!bit_at(bits, width, height, cx, cy)) return 0;
 
     y = cy;
     while (y >= 0 && bit_at(bits, width, height, cx, y)) {
-        c2++;
+        if (++c2 > max_run) return 0;
         y--;
     }
     while (y >= 0 && !bit_at(bits, width, height, cx, y)) {
-        c1++;
+        if (++c1 > max_run) return 0;
         y--;
     }
     while (y >= 0 && bit_at(bits, width, height, cx, y)) {
-        c0++;
+        if (++c0 > max_run) return 0;
         y--;
     }
 
     y = cy + 1;
     while (y < height && bit_at(bits, width, height, cx, y)) {
-        c2++;
+        if (++c2 > max_run) return 0;
         y++;
     }
     while (y < height && !bit_at(bits, width, height, cx, y)) {
-        c3++;
+        if (++c3 > max_run) return 0;
         y++;
     }
     while (y < height && bit_at(bits, width, height, cx, y)) {
-        c4++;
+        if (++c4 > max_run) return 0;
         y++;
     }
 
@@ -1671,12 +1673,11 @@ static int
 append_or_merge_center(FinderCenter *centers, int *center_count, int center_cap, double x, double y, double module)
 {
     int i;
-    double merge_radius = module * 1.6;
+    double merge_radius_sq = module * module * 2.56;
     for (i = 0; i < *center_count; i++) {
         double dx = centers[i].x - x;
         double dy = centers[i].y - y;
-        double dist = sqrt(dx * dx + dy * dy);
-        if (dist <= merge_radius) {
+        if (dx * dx + dy * dy <= merge_radius_sq) {
             int n = centers[i].count + 1;
             centers[i].x = (centers[i].x * centers[i].count + x) / n;
             centers[i].y = (centers[i].y * centers[i].count + y) / n;
@@ -1744,16 +1745,25 @@ cimage_find_finder_centers(PyObject *self, PyObject *args)
             double hmodule;
             double vmodule;
             double module;
+            int total;
             if (!bit_at(bits, width, height, x, y)) {
                 continue;
             }
             if (!collect_cross_runs_horizontal(bits, width, height, x, y, hruns)) {
                 continue;
             }
+            total = hruns[0] + hruns[1] + hruns[2] + hruns[3] + hruns[4];
+            if (total < 7 || hruns[2] < 3) {
+                continue;
+            }
             if (!ratio_match_11311(hruns, variance)) {
                 continue;
             }
             if (!collect_cross_runs_vertical(bits, width, height, x, y, vruns)) {
+                continue;
+            }
+            total = vruns[0] + vruns[1] + vruns[2] + vruns[3] + vruns[4];
+            if (total < 7 || vruns[2] < 3) {
                 continue;
             }
             if (!ratio_match_11311(vruns, variance)) {

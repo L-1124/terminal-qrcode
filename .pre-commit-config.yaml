@@ -41,3 +41,10 @@ repos:
         entry: uv run pyrefly check
         language: system
         files: \.(py|pyi)$
+
+      - id: testing
+        name: testing
+        language: system
+        entry: uv run pytest
+        pass_filenames: false
+        files: \.(py|pyi)$

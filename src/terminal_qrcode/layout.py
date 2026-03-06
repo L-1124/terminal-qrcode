@@ -62,21 +62,21 @@ def _get_available_cells() -> tuple[int, int]:
 
 def _resolve_user_width_cap(config: RenderConfig) -> int | None:
     """解析用户显式传入的宽度上限."""
-    if config.img_width is None:
+    if config.layout.img_width is None:
         return None
-    return max(1, config.img_width)
+    return max(1, config.layout.img_width)
 
 
 def _resolve_target_cols(config: RenderConfig) -> int:
     """解析当前配置下的目标列宽."""
-    if config.fit:
+    if config.layout.fit:
         cols, rows = _get_available_cells()
         plan = _build_fit_plan(config, cols, rows)
         return plan.display_cols
 
-    cols = max(1, config.img_width if config.img_width is not None else _DEFAULT_IMG_WIDTH)
-    if config.max_cols is not None:
-        cols = min(cols, config.max_cols)
+    cols = max(1, config.layout.img_width if config.layout.img_width is not None else _DEFAULT_IMG_WIDTH)
+    if config.layout.max_cols is not None:
+        cols = min(cols, config.layout.max_cols)
     return max(1, cols)
 
 
@@ -86,11 +86,11 @@ def _build_fit_plan(config: RenderConfig, src_w: int, src_h: int) -> FitPlan:
     src_w = max(1, src_w)
     src_h = max(1, src_h)
 
-    if config.fit:
+    if config.layout.fit:
         budget_cols = max(1, int(avail_cols * _FIT_WIDTH_USAGE))
         budget_rows = max(1, int(avail_rows * _FIT_HEIGHT_USAGE))
-        if config.max_cols is not None:
-            budget_cols = min(budget_cols, config.max_cols)
+        if config.layout.max_cols is not None:
+            budget_cols = min(budget_cols, config.layout.max_cols)
         user_cap = _resolve_user_width_cap(config)
         if user_cap is not None:
             budget_cols = min(budget_cols, user_cap)
@@ -100,9 +100,9 @@ def _build_fit_plan(config: RenderConfig, src_w: int, src_h: int) -> FitPlan:
         display_rows = max(1, int(round(display_cols * src_h / src_w * _CELL_ASPECT_W_OVER_H)))
         return FitPlan(avail_cols, avail_rows, budget_cols, budget_rows, display_cols, display_rows)
 
-    display_cols = max(1, config.img_width if config.img_width is not None else _DEFAULT_IMG_WIDTH)
-    if config.max_cols is not None:
-        display_cols = min(display_cols, config.max_cols)
+    display_cols = max(1, config.layout.img_width if config.layout.img_width is not None else _DEFAULT_IMG_WIDTH)
+    if config.layout.max_cols is not None:
+        display_cols = min(display_cols, config.layout.max_cols)
     display_rows = max(1, int(round(display_cols * src_h / src_w * _CELL_ASPECT_W_OVER_H)))
     return FitPlan(avail_cols, avail_rows, display_cols, display_rows, display_cols, display_rows)
 

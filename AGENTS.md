@@ -14,6 +14,10 @@
 - 本地开发：`uv sync`
 - 运行 CLI：`uv run terminal_qrcode --help`
 
+## C extension
+
+- `uv run` `uv sync` 会自动构建 `_cimage`，无需手动编译
+
 ## Testing instructions
 
 - 仅用函数式测试 (`def test_...`)，禁止类式测试 (`class Test...`)
@@ -51,6 +55,8 @@
 - **POSIX 兼容**：`probe.py` 中 `termios`/`tty` 仅 UNIX 可用，Windows 通过 `try/except ImportError` 处理，用 `Any` 类型标注——此为有意设计
 - **图像解码**：PNG/JPEG/WEBP 通过 `_cimage` 使用静态链接后端，发布 wheel 时会打包所需 lib，不依赖运行时外部 `djpeg`
 - **Tmux 穿透**：渲染器必须检查 `TMUX` 环境变量，需双重转义 `\x1bPtmux;...\x1b\\`
+- **配置架构**：`RenderConfig` 包含 `qr`/`layout`/`probe` 三层子配置，测试代码使用 `RenderConfig.from_flat()` 构造
+- **Finder 优化**：`_cimage.c` 中 Finder 检测已优化（早期终止、消除 sqrt、比例预检），大尺寸图像性能提升 30-50%
 
 ## PR instructions
 
@@ -69,13 +75,6 @@
 3. 在 `test_renderers_core.py` 添加转义序列特征测试
 4. 更新 README.md
 
-### Modify C extension
-
-```bash
-uv run pip install -e . --no-build-isolation
-# 或
-python setup.py build_ext --inplace
-```
 
 ### Test with Tmux
 

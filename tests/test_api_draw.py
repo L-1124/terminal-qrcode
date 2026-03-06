@@ -92,10 +92,10 @@ def test_draw_flat_kwargs_api(mock_probe, mock_render):
 
     args, _ = mock_render.call_args
     passed_config = args[1]
-    assert passed_config.renderer == "auto"
-    assert passed_config.invert is True
-    assert passed_config.fit is False
-    assert passed_config.max_cols == 60
+    assert passed_config.probe.renderer == "auto"
+    assert passed_config.qr.invert is True
+    assert passed_config.layout.fit is False
+    assert passed_config.layout.max_cols == 60
 
 
 @patch("terminal_qrcode.core.run_pipeline")
@@ -239,5 +239,5 @@ def test_draw_fit_true_without_img_width_uses_none_override(mock_run_pipeline):
     _ = list(draw(img, fit=True))
 
     request = mock_run_pipeline.call_args.args[0]
-    assert request.config.fit is True
-    assert request.config.img_width is None
+    assert request.config.layout.fit is True
+    assert request.config.layout.img_width is None

@@ -101,9 +101,9 @@ def _should_tmux_wrap(config: RenderConfig) -> bool:
     if "TMUX" not in os.environ:
         return False
 
-    if config.tmux_passthrough == "always":
+    if config.probe.tmux_passthrough == "always":
         return True
-    if config.tmux_passthrough == "never":
+    if config.probe.tmux_passthrough == "never":
         return False
 
     allow = _tmux_allow_passthrough()
@@ -157,7 +157,7 @@ class HalfBlockRenderer:
         if isinstance(payload, SimpleImage):
             raise TypeError("HalfBlockRenderer only accepts matrix payload.")
         matrix = self._normalize_matrix(payload, config)
-        yield from self._generate_characters(matrix, bool(config.invert), config.color_level)
+        yield from self._generate_characters(matrix, bool(config.qr.invert), config.probe.color_level)
 
     def _normalize_matrix(self, payload: Matrix, config: RenderConfig) -> Matrix:
         """将输入矩阵归一化并按模式执行尺寸适配."""
@@ -166,7 +166,7 @@ class HalfBlockRenderer:
             return [[False]]
         base_w = len(matrix[0])
 
-        if not config.fit:
+        if not config.layout.fit:
             target_cols = _resolve_target_cols(config)
             if base_w > target_cols:
                 raise ValueError(
@@ -176,10 +176,10 @@ class HalfBlockRenderer:
 
         plan = _build_fit_plan(config, len(matrix[0]), len(matrix))
         effective_cols = max(1, plan.avail_cols)
-        if config.max_cols is not None:
-            effective_cols = min(effective_cols, config.max_cols)
-        if config.img_width is not None:
-            effective_cols = min(effective_cols, config.img_width)
+        if config.layout.max_cols is not None:
+            effective_cols = min(effective_cols, config.layout.max_cols)
+        if config.layout.img_width is not None:
+            effective_cols = min(effective_cols, config.layout.img_width)
 
         if base_w > effective_cols:
             raise ValueError(
@@ -187,7 +187,7 @@ class HalfBlockRenderer:
                 "Increase width or use a graphic protocol renderer."
             )
 
-        if config.halfblock_mode == "precision":
+        if config.layout.halfblock_mode == "precision":
             return matrix
 
         scale = self._choose_scale_area_mode(len(matrix[0]), len(matrix), plan.avail_cols, plan.avail_rows)
