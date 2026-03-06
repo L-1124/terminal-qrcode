@@ -9,7 +9,6 @@ import pytest
 from terminal_qrcode import draw
 from terminal_qrcode.contracts import TerminalCapability, TerminalColorLevel
 from terminal_qrcode.probe import TerminalProbe
-from terminal_qrcode.simple_image import SimpleImage
 
 
 @pytest.fixture(autouse=True)
@@ -119,8 +118,23 @@ def test_probe_timeout(mock_select, mock_stdin, mock_stdout):
 @patch("terminal_qrcode.probe.TerminalProbe.probe")
 def test_draw_short_circuit(mock_probe):
     """验证强制指定渲染器时会绕过自动探测."""
-    img = SimpleImage.new("RGB", (2, 2), color=(0, 0, 0))
-    result = "".join(draw(img, force_renderer="halfblock"))
+    size = 21
+    matrix = [[False for _ in range(size)] for _ in range(size)]
+
+    def _add_finder(ox: int, oy: int) -> None:
+        for y in range(7):
+            for x in range(7):
+                if x in (0, 6) or y in (0, 6):
+                    matrix[oy + y][ox + x] = True
+                elif x in (1, 5) or y in (1, 5):
+                    matrix[oy + y][ox + x] = False
+                else:
+                    matrix[oy + y][ox + x] = True
+
+    _add_finder(0, 0)
+    _add_finder(size - 7, 0)
+    _add_finder(0, size - 7)
+    result = "".join(draw(matrix, force_renderer="halfblock"))
     assert not mock_probe.called
     assert any(c in result for c in ("▄", "▀", "█", " "))
 
