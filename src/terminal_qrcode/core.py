@@ -37,7 +37,7 @@ def _merge_config(config: RenderConfig | None, overrides: dict[str, object]) -> 
     if not cleaned:
         return base
 
-    qr_fields = {"scale", "repair", "border", "finder_variance", "restore_window", "invert"}
+    qr_fields = {"border", "finder_variance", "restore_window", "invert"}
     layout_fields = {"fit", "max_cols", "img_width", "halfblock_mode"}
     probe_fields = {"renderer", "timeout", "color_level", "tmux_passthrough"}
 

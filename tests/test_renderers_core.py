@@ -16,7 +16,6 @@ from terminal_qrcode.contracts import (
     ProbeConfig,
     QRConfig,
     RendererOption,
-    RepairMode,
 )
 from terminal_qrcode.core import DEFAULT_RENDERER_REGISTRY, RenderConfig, Renderer, TerminalCapability
 from terminal_qrcode.renderers import HalfBlockRenderer, ITerm2Renderer, KittyRenderer, SixelRenderer, WezTermRenderer
@@ -73,8 +72,6 @@ def _render_matrix_to_image(
 
 def _render_config(
     *,
-    scale: int = 8,
-    repair: RepairMode = "strict",
     border: int = 4,
     finder_variance: float = 0.8,
     restore_window: int = 3,
@@ -90,8 +87,6 @@ def _render_config(
 ) -> RenderConfig:
     return RenderConfig(
         qr=QRConfig(
-            scale=scale,
-            repair=repair,
             border=border,
             finder_variance=finder_variance,
             restore_window=restore_window,
@@ -126,9 +121,7 @@ def test_renderer_protocol():
 def test_render_config_defaults():
     """验证渲染配置核心默认值."""
     config = RenderConfig()
-    assert config.qr.scale == 8
     assert config.probe.renderer == "auto"
-    assert config.qr.repair == "strict"
     assert config.qr.invert is None
     assert config.layout.fit is True
     assert config.layout.max_cols is None

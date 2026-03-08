@@ -11,7 +11,6 @@ if TYPE_CHECKING:
 RendererOption = Literal["auto", "kitty", "iterm2", "wezterm", "sixel", "halfblock"]
 HalfBlockMode = Literal["precision", "area"]
 ColorLevelName = Literal["auto", "none", "ansi16", "ansi256", "truecolor"]
-RepairMode = Literal["off", "best_effort", "strict"]
 Matrix: TypeAlias = list[list[bool]]
 PixelMode: TypeAlias = Literal["L", "RGB", "RGBA"]
 
@@ -20,8 +19,6 @@ PixelMode: TypeAlias = Literal["L", "RGB", "RGBA"]
 class QRConfig:
     """QR 码生成与修复配置."""
 
-    scale: int = 8
-    repair: RepairMode = "strict"
     border: int = 4
     finder_variance: float = 0.8
     restore_window: int = 3
