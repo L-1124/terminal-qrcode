@@ -121,7 +121,7 @@ def draw(
 
 
 def draw(
-    payload: ImageInput | str | Path | bytes | bytearray,
+    payload: "ImageInput | str | Path | bytes | bytearray",
     *,
     renderer: RendererOption = "auto",
     invert: bool | None = None,

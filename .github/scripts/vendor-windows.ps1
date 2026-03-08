@@ -49,13 +49,13 @@ if (-not (Test-Path $vcpkg)) {
 }
 
 Invoke-WithRetry -Name "vcpkg install dependencies" -Action {
-    & $vcpkg install libjpeg-turbo:x64-windows-static libpng:x64-windows-static "libwebp[core]:x64-windows-static"
+    & $vcpkg install libjpeg-turbo:x64-windows-static-md libpng:x64-windows-static-md "libwebp[core]:x64-windows-static-md"
     if ($LASTEXITCODE -ne 0) {
         throw "vcpkg install failed with exit code $LASTEXITCODE"
     }
 }
 
-$installedDir = Join-Path $vcpkgRoot "installed\x64-windows-static"
+$installedDir = Join-Path $vcpkgRoot "installed\x64-windows-static-md"
 $includeDir = Join-Path $installedDir "include"
 $libDir = Join-Path $installedDir "lib"
 

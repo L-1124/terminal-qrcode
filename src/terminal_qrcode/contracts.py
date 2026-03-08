@@ -122,6 +122,6 @@ class RenderRequest:
 class Renderer(Protocol):
     """渲染器协议."""
 
-    def render(self, payload: Matrix | SimpleImage, config: RenderConfig) -> Generator[str, None, None]:
+    def render(self, payload: "Matrix | SimpleImage", config: RenderConfig) -> Generator[str, None, None]:
         """流式分片渲染二维码矩阵或图像."""
         ...

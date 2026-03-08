@@ -85,7 +85,7 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         run: |
-          VCPKG_INSTALLED="$RUNNER_TEMP/vcpkg/installed/x64-windows-static"
+          VCPKG_INSTALLED="$RUNNER_TEMP/vcpkg/installed/x64-windows-static-md"
           echo "CIMAGE_INCLUDE_DIRS=$VCPKG_INSTALLED/include" >> "$GITHUB_ENV"
           echo "CIMAGE_LIBRARY_DIRS=$VCPKG_INSTALLED/lib" >> "$GITHUB_ENV"
 

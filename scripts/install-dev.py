@@ -8,9 +8,9 @@ from collections.abc import Callable
 from pathlib import Path
 
 REQUIRED_PORTS = [
-    "libjpeg-turbo:x64-windows-static",
-    "libpng:x64-windows-static",
-    "libwebp[core]:x64-windows-static",
+    "libjpeg-turbo:x64-windows-static-md",
+    "libpng:x64-windows-static-md",
+    "libwebp[core]:x64-windows-static-md",
 ]
 
 

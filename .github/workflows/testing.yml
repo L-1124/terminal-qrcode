@@ -94,7 +94,7 @@ jobs:
         run: |
           .github/scripts/vendor-windows.ps1
           $vcpkgRoot = Join-Path $env:RUNNER_TEMP "vcpkg"
-          $installed = Join-Path $vcpkgRoot "installed\x64-windows-static"
+          $installed = Join-Path $vcpkgRoot "installed\x64-windows-static-md"
           "QRT_VCPKG_ROOT=$vcpkgRoot" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "CIMAGE_INCLUDE_DIRS=$installed\include" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
           "CIMAGE_LIBRARY_DIRS=$installed\lib" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
