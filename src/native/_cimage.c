@@ -772,7 +772,7 @@ cimage_decode_webp_lib(PyObject *self, PyObject *args)
     }
 
     pixels = PyBytes_FromStringAndSize((const char *)decoded, (Py_ssize_t)width * height * 4);
-    free(decoded);
+    WebPFree(decoded);
     PyBuffer_Release(&in_buf);
 
     if (pixels == NULL) {

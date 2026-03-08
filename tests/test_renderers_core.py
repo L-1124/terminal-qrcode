@@ -75,7 +75,7 @@ def _render_config(
     *,
     scale: int = 8,
     repair: RepairMode = "strict",
-    border: int = 2,
+    border: int = 4,
     finder_variance: float = 0.8,
     restore_window: int = 3,
     invert: bool | None = None,
@@ -134,7 +134,7 @@ def test_render_config_defaults():
     assert config.layout.max_cols is None
     assert config.layout.img_width is None
     assert config.layout.halfblock_mode == "precision"
-    assert config.qr.border == 2
+    assert config.qr.border == 4
 
 
 def test_halfblock_fit_false_rejects_lossy_downscale():

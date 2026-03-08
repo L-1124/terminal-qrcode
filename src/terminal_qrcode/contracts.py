@@ -22,7 +22,7 @@ class QRConfig:
 
     scale: int = 8
     repair: RepairMode = "strict"
-    border: int = 2
+    border: int = 4
     finder_variance: float = 0.8
     restore_window: int = 3
     invert: bool | None = None
