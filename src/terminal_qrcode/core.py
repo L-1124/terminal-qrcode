@@ -231,7 +231,7 @@ def _resolve_render_payload(request: RenderRequest, capability: TerminalCapabili
         image_payload = _to_simple_image(payload)
         if _restore_qr_matrix(image_payload, config) is None:
             raise ValueError("Failed to decode QR matrix from image. Input must be a valid machine-generated QR code.")
-        return image_payload
+        return _to_render_matrix(payload, config)
     return _to_render_matrix(payload, config)
 
 
