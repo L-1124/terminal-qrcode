@@ -54,6 +54,11 @@ def main():
         help="fit=True 时仅显式指定才作为列宽上限，fit=False 时未指定则使用默认 40 列",
     )
     parser.add_argument(
+        "--preserve-source",
+        action="store_true",
+        help="在图形协议终端下尝试保留并直接渲染原始图像(默认会转换为规范化的黑白矩阵重绘)",
+    )
+    parser.add_argument(
         "--debug",
         action="store_true",
         help="开启调试模式, 输出详细的环境探测与渲染流程日志",
@@ -109,6 +114,7 @@ def main():
             fit=args.fit,
             max_cols=args.max_cols,
             img_width=args.img_width,
+            preserve_source=args.preserve_source,
         )
 
         print(str(output), end="", flush=True)  # noqa: T201

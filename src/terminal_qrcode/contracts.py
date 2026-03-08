@@ -23,6 +23,7 @@ class QRConfig:
     finder_variance: float = 0.8
     restore_window: int = 3
     invert: bool | None = None
+    preserve_source: bool = False
 
 
 @dataclass(frozen=True)

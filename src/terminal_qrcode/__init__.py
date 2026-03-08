@@ -28,6 +28,7 @@ def _build_overrides(
     fit: bool | None,
     max_cols: int | None,
     img_width: int | None,
+    preserve_source: bool | None,
 ) -> dict[str, object]:
     """构建渲染覆盖参数字典."""
     return {
@@ -36,6 +37,7 @@ def _build_overrides(
         "fit": fit,
         "max_cols": max_cols,
         "img_width": img_width,
+        "preserve_source": preserve_source,
     }
 
 
@@ -93,6 +95,7 @@ def draw(
     fit: bool | None = None,
     max_cols: int | None = None,
     img_width: int | None = None,
+    preserve_source: bool | None = None,
 ) -> DrawOutput: ...
 
 
@@ -105,6 +108,7 @@ def draw(
     fit: bool | None = None,
     max_cols: int | None = None,
     img_width: int | None = None,
+    preserve_source: bool | None = None,
 ) -> DrawOutput: ...
 
 
@@ -117,6 +121,7 @@ def draw(
     fit: bool | None = None,
     max_cols: int | None = None,
     img_width: int | None = None,
+    preserve_source: bool | None = None,
 ) -> DrawOutput: ...
 
 
@@ -128,6 +133,7 @@ def draw(
     fit: bool | None = None,
     max_cols: int | None = None,
     img_width: int | None = None,
+    preserve_source: bool | None = None,
 ) -> DrawOutput:
     """
     探测终端并生成及分片产出二维码渲染流.
@@ -139,6 +145,7 @@ def draw(
         fit: 是否按终端列宽自动收束.
         max_cols: 最大列宽上限.
         img_width: 渲染宽度（fit=True 时仅显式指定才作为额外上限，fit=False 时未指定默认 40）.
+        preserve_source: 是否在图形协议终端下尝试保留并直接渲染原始图像.
 
     Returns:
         支持分片迭代与直接字符串输出的包装对象.
@@ -178,6 +185,7 @@ def draw(
         fit=fit,
         max_cols=max_cols,
         img_width=img_width,
+        preserve_source=preserve_source,
     )
     request = core._normalize_request(payload, source=source, overrides=overrides)
     return DrawOutput(core.run_pipeline(request))

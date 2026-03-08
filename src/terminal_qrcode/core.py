@@ -37,7 +37,7 @@ def _merge_config(config: RenderConfig | None, overrides: dict[str, object]) -> 
     if not cleaned:
         return base
 
-    qr_fields = {"border", "finder_variance", "restore_window", "invert"}
+    qr_fields = {"border", "finder_variance", "restore_window", "invert", "preserve_source"}
     layout_fields = {"fit", "max_cols", "img_width", "halfblock_mode"}
     probe_fields = {"renderer", "timeout", "color_level", "tmux_passthrough"}
 
@@ -222,17 +222,25 @@ def _resolve_render_payload(request: RenderRequest, capability: TerminalCapabili
     """根据请求和终端能力解析最终渲染载荷."""
     payload = request.payload
     config = request.config
-    if capability in {
+
+    if isinstance(payload, list):
+        _validate_matrix_shape(payload)
+        return [list(row) for row in payload]
+
+    image_payload = _to_simple_image(payload)
+    matrix = _restore_qr_matrix(image_payload, config)
+    if matrix is None:
+        raise ValueError("Failed to decode QR matrix from image. Input must be a valid machine-generated QR code.")
+
+    if config.qr.preserve_source and capability in {
         TerminalCapability.KITTY,
         TerminalCapability.ITERM2,
         TerminalCapability.WEZTERM,
         TerminalCapability.SIXEL,
-    } and not isinstance(payload, list):
-        image_payload = _to_simple_image(payload)
-        if _restore_qr_matrix(image_payload, config) is None:
-            raise ValueError("Failed to decode QR matrix from image. Input must be a valid machine-generated QR code.")
-        return _to_render_matrix(payload, config)
-    return _to_render_matrix(payload, config)
+    }:
+        return image_payload
+
+    return _pad_border(matrix, config.qr.border)
 
 
 def run_pipeline(request: RenderRequest) -> Generator[str, None, None]:
