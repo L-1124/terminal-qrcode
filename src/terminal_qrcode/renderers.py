@@ -300,10 +300,10 @@ class KittyRenderer:
             size = len(payload)
             scale, display_cols, display_rows = _resolve_integer_scale(config, size)
             image = _matrix_to_image(payload, scale, "RGBA")
-        width, height = image.width, image.height
 
-        rgba_data = image.tobytes()
-        b64_data = base64.b64encode(rgba_data).decode("ascii")
+        # 使用 PNG 压缩传输 (f=100) 以显著减少带宽占用
+        png_data = image.to_png_bytes()
+        b64_data = base64.b64encode(png_data).decode("ascii")
 
         chunk_size = 4096
         payloads: list[str] = []
@@ -315,7 +315,8 @@ class KittyRenderer:
             m = 0 if is_last else 1
 
             if i == 0:
-                sequence = f"\x1b_Ga=T,f=32,s={width},v={height},c={display_cols},r={display_rows},m={m};{chunk}\x1b\\"
+                # f=100 表示 PNG 格式，此时无需显式指定 s (width) 和 v (height)
+                sequence = f"\x1b_Ga=T,f=100,c={display_cols},r={display_rows},m={m};{chunk}\x1b\\"
             else:
                 sequence = f"\x1b_Gm={m};{chunk}\x1b\\"
 
@@ -403,8 +404,13 @@ class SixelRenderer:
         yield payload_seq
 
 
+def _is_ssh_connection() -> bool:
+    """检测当前是否处于 SSH 连接中."""
+    return "SSH_CONNECTION" in os.environ or "SSH_CLIENT" in os.environ
+
+
 class RendererRegistry(Generic[T]):
-    """按终端能力映射渲染器工厂."""
+    """按终端能力映射渲染器工厂，支持环境自适应排序."""
 
     def __init__(
         self,
@@ -424,6 +430,37 @@ class RendererRegistry(Generic[T]):
         """获取 capability 对应渲染器，不存在时回退默认工厂."""
         factory = self._factories.get(capability, self._fallback_factory)
         return factory()
+
+    def select_renderer(self, capabilities: list[TerminalCapability]) -> T:
+        """从终端探测到的能力列表中，根据当前环境（如带宽）选择最优渲染器."""
+        if not capabilities:
+            return self._fallback_factory()
+
+        # 定义渲染器优先级逻辑
+        # 默认情况下：图形协议越先进越优先 (Kitty > iTerm2/WezTerm > Sixel)
+        # 在 SSH 等高延迟、低带宽环境下：Sixel 因其高效的 RLE 压缩，往往比 PNG 传输更为紧凑
+        if _is_ssh_connection():
+            priority = [
+                TerminalCapability.SIXEL,
+                TerminalCapability.KITTY,
+                TerminalCapability.WEZTERM,
+                TerminalCapability.ITERM2,
+                TerminalCapability.FALLBACK,
+            ]
+        else:
+            priority = [
+                TerminalCapability.KITTY,
+                TerminalCapability.WEZTERM,
+                TerminalCapability.ITERM2,
+                TerminalCapability.SIXEL,
+                TerminalCapability.FALLBACK,
+            ]
+
+        for cap in priority:
+            if cap in capabilities:
+                return self.get(cap)
+
+        return self._fallback_factory()
 
 
 def build_default_renderer_registry() -> RendererRegistry[Renderer]:
