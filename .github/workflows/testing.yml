@@ -8,6 +8,7 @@ on:
       - "tests/**"
       - "pyproject.toml"
       - ".github/workflows/testing.yml"
+      - "setup.py"
       
   pull_request:
     branches: [main]

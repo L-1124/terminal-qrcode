@@ -224,6 +224,7 @@ def _get_compiler_configs() -> tuple[list[tuple[str, str | None]], list[str]]:
 
 _include_dirs_path, _library_dirs_path = _resolve_directories()
 _include_dirs = [str(p) for p in _include_dirs_path]
+_library_dirs = [str(p) for p in _library_dirs_path]
 _lib_candidates = _get_target_lib_candidates()
 _extra_objects = _find_static_objects(_library_dirs_path, _lib_candidates)  # Windows 静态库
 _libraries = _get_library_names(_lib_candidates)  # Linux/macOS 动态链接库名
@@ -235,6 +236,7 @@ setup(
             "terminal_qrcode._cimage",
             ["src/native/_cimage.c"],
             include_dirs=_include_dirs,
+            library_dirs=_library_dirs,
             extra_objects=_extra_objects,
             libraries=_libraries,
             define_macros=_macros,
