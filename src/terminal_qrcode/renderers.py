@@ -213,14 +213,13 @@ class HalfBlockRenderer:
     def _generate_characters(
         self, matrix: Matrix, invert_for_render: bool, color_level: ColorLevelName
     ) -> Generator[str, None, None]:
-        """将 bool 矩阵转换为字符串流."""
+        """将 bool 矩阵转换为字符串流，按 run 合并相同 SGR."""
         rows = [row[:] for row in matrix]
         if len(rows) % 2 != 0:
             rows.append([False] * len(rows[0]))
 
         lines_per_chunk = 50
         buffer_pool: list[str] = []
-        palette = _halfblock_palette(color_level)
         color_enabled = color_level != "none"
         if color_enabled:
             _ensure_colorama_console()
@@ -229,17 +228,48 @@ class HalfBlockRenderer:
             row_top = rows[i]
             row_bottom = rows[i + 1]
 
-            line_chars = []
+            line_parts: list[str] = []
+            last_fg_dark: bool | None = None
+            last_bg_dark: bool | None = None
+            run_chars: list[str] = []
+
             for top, bottom in zip(row_top, row_bottom, strict=False):
                 if invert_for_render:
                     top, bottom = not top, not bottom
 
-                index = (int(top) << 1) | int(bottom)
-                line_chars.append(palette[index])
+                # 计算当前 cell 的前景/背景颜色
+                fg_dark = bool(top)
+                bg_dark = bool(bottom)
+                char_idx = (int(top) << 1) | int(bottom)
+                char = _HALFBLOCK_CHARS[char_idx]
 
-            line = "".join(line_chars)
+                # 检查是否需要发送新的 SGR（颜色改变或运行结束）
+                if color_enabled and (fg_dark != last_fg_dark or bg_dark != last_bg_dark):
+                    # 输出前一个 run 的字符（如果有的话）
+                    if run_chars and last_fg_dark is not None and last_bg_dark is not None:
+                        sgr = _halfblock_sgr(color_level, last_fg_dark, last_bg_dark)
+                        line_parts.append(sgr)
+                        line_parts.append("".join(run_chars))
+                        run_chars.clear()
+                    # 记录新的颜色
+                    last_fg_dark = fg_dark
+                    last_bg_dark = bg_dark
+
+                run_chars.append(char)
+
+            # 输出最后一个 run
+            if run_chars:
+                # 仅当颜色启用且之前有 run 时才发送 SGR
+                if color_enabled and last_fg_dark is not None and last_bg_dark is not None:
+                    sgr = _halfblock_sgr(color_level, last_fg_dark, last_bg_dark)
+                    line_parts.append(sgr)
+                line_parts.append("".join(run_chars))
+
+            # 添加重置序列
             if color_enabled:
-                line = f"{line}{_SGR_RESET}"
+                line_parts.append(_SGR_RESET)
+
+            line = "".join(line_parts)
             buffer_pool.append(line)
             if len(buffer_pool) >= lines_per_chunk:
                 yield "\n".join(buffer_pool) + "\n"
