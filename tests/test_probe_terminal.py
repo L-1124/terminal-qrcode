@@ -64,11 +64,11 @@ def test_probe_color_term_256(mock_stdout):
 
 @patch.dict("os.environ", {"TERM": "screen"}, clear=True)
 @patch("sys.stdout")
-def test_probe_color_term_prefix_ansi16(mock_stdout):
-    """验证常见 TERM 前缀可判定为 ansi16."""
+def test_probe_color_term_prefix_ansi256(mock_stdout):
+    """验证常见 TERM 前缀默认升级为 ansi256 以避免 16 色不稳定."""
     mock_stdout.isatty.return_value = True
     probe = TerminalProbe()
-    assert probe.probe_color() == TerminalColorLevel.ANSI16
+    assert probe.probe_color() == TerminalColorLevel.ANSI256
 
 
 @patch.dict("os.environ", {"TERM": "dumb"}, clear=True)

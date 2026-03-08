@@ -390,12 +390,14 @@ class TerminalProbe:
         if "256color" in term:
             return _finalize(TerminalColorLevel.ANSI256, "term_256color")
 
-        ansi16_prefixes = ("xterm", "screen", "tmux", "vt100", "linux", "ansi", "rxvt")
-        if term.startswith(ansi16_prefixes):
-            return _finalize(TerminalColorLevel.ANSI16, "term_prefix")
+        # 避免 ANSI16 不稳定：常见终端前缀（xterm, screen, tmux 等）通常比预期更强大，
+        # 为了防止 16 色槽主题重映射造成的清晰度问题，默认假设 ANSI256 支持。
+        basic_term_prefixes = ("xterm", "screen", "tmux", "vt100", "linux", "ansi", "rxvt")
+        if term.startswith(basic_term_prefixes):
+            return _finalize(TerminalColorLevel.ANSI256, "term_prefix_conservative")
 
         if sys.platform == "win32" and self._supports_windows_color_env():
-            return _finalize(TerminalColorLevel.ANSI16, "windows_env")
+            return _finalize(TerminalColorLevel.ANSI256, "windows_env_conservative")
 
         return _finalize(TerminalColorLevel.NONE, "fallback")
 
