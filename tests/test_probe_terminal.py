@@ -350,7 +350,7 @@ def test_probe_wezterm_heuristic_bypasses_interactive(mock_stdin, mock_stdout, m
     mock_stdin.isatty.return_value = True
     mock_stdout.isatty.return_value = True
     probe = TerminalProbe()
-    assert probe.probe(timeout=0.2) == TerminalCapability.ITERM2
+    assert probe.probe(timeout=0.2) == TerminalCapability.WEZTERM
     assert mock_retry.call_count == 0
 
 

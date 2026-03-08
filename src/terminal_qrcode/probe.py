@@ -433,7 +433,7 @@ class TerminalProbe:
             return _finalize(TerminalCapability.KITTY, "kitty_env")
 
         if self._can_use_wezterm_heuristic():
-            return _finalize(TerminalCapability.ITERM2, "wezterm_heuristic")
+            return _finalize(TerminalCapability.WEZTERM, "wezterm_heuristic")
 
         if not self._supports_interactive_probe():
             return _finalize(TerminalCapability.FALLBACK, "fallback")
