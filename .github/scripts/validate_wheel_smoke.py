@@ -6,9 +6,62 @@ import os
 import re
 import subprocess
 import sys
+import sysconfig
 import tempfile
 import venv
 from pathlib import Path
+
+
+def _wheel_platform_tags(path: Path) -> set[str]:
+    """从 wheel 文件名提取平台 tag 列表."""
+    stem = path.stem
+    try:
+        _dist_and_ver, _py_tag, _abi_tag, platform_tags = stem.rsplit("-", 3)
+    except ValueError:
+        return set()
+    return {tag.lower() for tag in platform_tags.split(".")}
+
+
+def _is_host_compatible_wheel(path: Path) -> bool:
+    """判断 wheel 是否与当前宿主平台兼容."""
+    wheel_tags = _wheel_platform_tags(path)
+    if not wheel_tags:
+        return False
+
+    platform_tag = sysconfig.get_platform().replace("-", "_").replace(".", "_").lower()
+
+    if os.name == "nt":
+        if platform_tag.endswith("amd64"):
+            return "win_amd64" in wheel_tags
+        if platform_tag.endswith("arm64"):
+            return "win_arm64" in wheel_tags
+        return "win32" in wheel_tags
+
+    if sys.platform == "linux":
+        if platform_tag.endswith("x86_64"):
+            arch = "x86_64"
+        elif platform_tag.endswith("aarch64"):
+            arch = "aarch64"
+        elif platform_tag.endswith("i686") or platform_tag.endswith("i386"):
+            arch = "i686"
+        else:
+            return False
+        return any(
+            (wheel_tag.startswith("manylinux") or wheel_tag.startswith("linux_")) and wheel_tag.endswith(f"_{arch}")
+            for wheel_tag in wheel_tags
+        )
+
+    if sys.platform == "darwin":
+        if platform_tag.endswith("arm64"):
+            return any(
+                wheel_tag.startswith("macosx_") and wheel_tag.endswith(("arm64", "universal2"))
+                for wheel_tag in wheel_tags
+            )
+        return any(
+            wheel_tag.startswith("macosx_") and wheel_tag.endswith(("x86_64", "universal2")) for wheel_tag in wheel_tags
+        )
+
+    return False
 
 
 def _supported_wheels(wheel_glob: str) -> list[str]:
@@ -16,7 +69,11 @@ def _supported_wheels(wheel_glob: str) -> list[str]:
     if not wheels:
         raise SystemExit("No wheel file found in wheelhouse/")
     interp_tag = f"cp{sys.version_info.major}{sys.version_info.minor}"
-    return [wheel for wheel in wheels if re.search(rf"-{interp_tag}-{interp_tag}-", Path(wheel).name)]
+    return [
+        wheel
+        for wheel in wheels
+        if re.search(rf"-{interp_tag}-{interp_tag}-", Path(wheel).name) and _is_host_compatible_wheel(Path(wheel))
+    ]
 
 
 def _smoke_code() -> str:
@@ -54,7 +111,10 @@ def main() -> int:
     supported = _supported_wheels(args.wheel_glob)
     interp_tag = f"cp{sys.version_info.major}{sys.version_info.minor}"
     if not supported:
-        print(f"No wheel matching interpreter tag {interp_tag}; skip smoke validation.")  # noqa: T201
+        host_platform = sysconfig.get_platform()
+        print(
+            f"No wheel matching interpreter tag {interp_tag} and host platform {host_platform}; skip smoke validation."
+        )  # noqa: T201
         return 0
 
     code = _smoke_code()

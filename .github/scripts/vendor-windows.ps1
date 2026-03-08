@@ -1,8 +1,25 @@
+param(
+    [Parameter(Mandatory = $false)]
+    [string]$Arch = ""
+)
+
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 # 使用 vcpkg 安装静态链接库（头文件 + .lib 静态库）
 # 静态链接后 wheel 无需捆绑 DLL
+
+if ([string]::IsNullOrWhiteSpace($Arch)) {
+    if (-not [string]::IsNullOrWhiteSpace($env:VCPKG_ARCH)) {
+        $Arch = $env:VCPKG_ARCH
+    } elseif ($env:CIBW_ARCHS -eq "x86") {
+        $Arch = "x86"
+    } elseif ($env:CIBW_ARCHS -eq "ARM64") {
+        $Arch = "arm64"
+    } else {
+        $Arch = "x64"
+    }
+}
 
 function Invoke-WithRetry {
     param(
@@ -48,14 +65,17 @@ if (-not (Test-Path $vcpkg)) {
     throw "vcpkg executable not found after bootstrap: $vcpkg"
 }
 
+$triplet = "$Arch-windows-static-md"
+Write-Host "Installing dependencies for triplet: $triplet"
+
 Invoke-WithRetry -Name "vcpkg install dependencies" -Action {
-    & $vcpkg install libjpeg-turbo:x64-windows-static-md libpng:x64-windows-static-md "libwebp[core]:x64-windows-static-md"
+    & $vcpkg install "libjpeg-turbo:$triplet" "libpng:$triplet" "libwebp[core]:$triplet"
     if ($LASTEXITCODE -ne 0) {
         throw "vcpkg install failed with exit code $LASTEXITCODE"
     }
 }
 
-$installedDir = Join-Path $vcpkgRoot "installed\x64-windows-static-md"
+$installedDir = Join-Path $vcpkgRoot "installed\$triplet"
 $includeDir = Join-Path $installedDir "include"
 $libDir = Join-Path $installedDir "lib"
 
@@ -66,7 +86,7 @@ if (-not (Test-Path $libDir)) {
     throw "vcpkg lib directory not found: $libDir"
 }
 
-Write-Host "vcpkg static libraries installed."
+Write-Host "vcpkg static libraries installed for $Arch."
 Write-Host "Include: $includeDir"
 Write-Host "Lib: $libDir"
 Get-ChildItem -Path $libDir -Filter "*.lib" | ForEach-Object { Write-Host "  $($_.Name) ($($_.Length) bytes)" }

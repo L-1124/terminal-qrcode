@@ -104,6 +104,10 @@ install_deps() {
     apt-get install -y libturbojpeg0-dev libpng-dev libwebp-dev zlib1g-dev
     return
   fi
+  if command -v apk >/dev/null 2>&1; then
+    apk add --no-cache libjpeg-turbo-dev libpng-dev libwebp-dev zlib-dev build-base
+    return
+  fi
   echo "Unsupported package manager on Linux runner." >&2
   exit 1
 }

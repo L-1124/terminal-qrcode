@@ -20,6 +20,9 @@ jobs:
           - runner: ubuntu-latest
             cibw_archs: "x86_64"
             artifact_name: "linux-x86_64"
+          - runner: ubuntu-latest
+            cibw_archs: "i686"
+            artifact_name: "linux-i686"
           - runner: ubuntu-24.04-arm
             cibw_archs: "aarch64"
             artifact_name: "linux-aarch64"
@@ -32,6 +35,9 @@ jobs:
           - runner: windows-latest
             cibw_archs: "AMD64"
             artifact_name: "windows-amd64"
+          - runner: windows-latest
+            cibw_archs: "x86"
+            artifact_name: "windows-x86"
     steps:
       - name: Checkout
         uses: actions/checkout@v6
@@ -71,9 +77,9 @@ jobs:
         uses: actions/cache@v5
         with:
           path: ${{ runner.temp }}/vcpkg
-          key: release-vcpkg-${{ runner.os }}-${{ hashFiles('.github/scripts/vendor-windows.ps1') }}
+          key: release-vcpkg-${{ runner.os }}-${{ matrix.cibw_archs }}-${{ hashFiles('.github/scripts/vendor-windows.ps1') }}
           restore-keys: |
-            release-vcpkg-${{ runner.os }}-
+            release-vcpkg-${{ runner.os }}-${{ matrix.cibw_archs }}-
 
       - name: Install build-essential (Linux)
         if: runner.os == 'Linux'
@@ -85,9 +91,15 @@ jobs:
         if: runner.os == 'Windows'
         shell: bash
         run: |
-          VCPKG_INSTALLED="$RUNNER_TEMP/vcpkg/installed/x64-windows-static-md"
+          if [ "${{ matrix.cibw_archs }}" == "x86" ]; then
+            VCPKG_ARCH="x86"
+          else
+            VCPKG_ARCH="x64"
+          fi
+          VCPKG_INSTALLED="$RUNNER_TEMP/vcpkg/installed/${VCPKG_ARCH}-windows-static-md"
           echo "CIMAGE_INCLUDE_DIRS=$VCPKG_INSTALLED/include" >> "$GITHUB_ENV"
           echo "CIMAGE_LIBRARY_DIRS=$VCPKG_INSTALLED/lib" >> "$GITHUB_ENV"
+          echo "VCPKG_ARCH=$VCPKG_ARCH" >> "$GITHUB_ENV"
 
       - name: Build wheels
         uses: pypa/cibuildwheel@v3.3.1
@@ -185,31 +197,16 @@ jobs:
       - name: Twine check
         run: uvx --from twine twine check release-dist/*
 
-      - name: Build AI prompt for release notes
+      - name: Collect release notes metadata
+        id: release_notes_inputs
         shell: bash
         run: |
           set -euo pipefail
 
           current_tag="${GITHUB_REF_NAME}"
           release_date="$(date -u +%F)"
-          prev_tag="$(git tag --sort=-v:refname | grep '^v' | grep -vx "${current_tag}" | head -n 1 || true)"
-
-          if [ -n "${prev_tag}" ]; then
-            range="${prev_tag}..${current_tag}"
-            compare_link="https://github.com/${GITHUB_REPOSITORY}/compare/${prev_tag}...${current_tag}"
-          else
-            range="${current_tag}"
-            compare_link="https://github.com/${GITHUB_REPOSITORY}/releases/tag/${current_tag}"
-          fi
-
-          git log --no-merges --pretty='- %s (%h)' "${range}" | head -n 200 > "${RUNNER_TEMP}/release-note.changes.txt" || true
-          uv run --no-project python .github/scripts/build_release_note_prompt.py \
-            --rules-file .github/release-notes-prompt.md \
-            --output "${RUNNER_TEMP}/release-note.prompt.yml" \
-            --version "${current_tag#v}" \
-            --release-date "${release_date}" \
-            --changes-file "${RUNNER_TEMP}/release-note.changes.txt" \
-            --compare-link "${compare_link}"
+          echo "version=${current_tag#v}" >> "${GITHUB_OUTPUT}"
+          echo "release_date=${release_date}" >> "${GITHUB_OUTPUT}"
 
       - name: Validate GitHub MCP token
         shell: bash
@@ -225,7 +222,12 @@ jobs:
         id: ai_release_notes
         uses: actions/ai-inference@v1
         with:
-          prompt-file: ${{ runner.temp }}/release-note.prompt.yml
+          prompt-file: .github/prompts/release-notes.prompt.yml
+          input: |
+            version: ${{ steps.release_notes_inputs.outputs.version }}
+            release_date: ${{ steps.release_notes_inputs.outputs.release_date }}
+            install_cmd: uv add terminal-qrcode
+          max-tokens: 2400
           enable-github-mcp: true
           github-mcp-token: ${{ secrets.MCP_PAT }}
 
@@ -233,6 +235,11 @@ jobs:
         shell: bash
         run: |
           cp "${{ steps.ai_release_notes.outputs.response-file }}" release-notes.json
+
+      - name: Validate generated release notes JSON
+        shell: bash
+        run: |
+          jq . release-notes.json > /dev/null
 
       - name: Render release notes markdown
         run: |

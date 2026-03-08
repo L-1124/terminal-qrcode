@@ -38,22 +38,24 @@ build-backend = "setuptools.build_meta"
 [tool.cibuildwheel]
 build-frontend = "build[uv]"
 build = ["cp310-*", "cp311-*", "cp312-*", "cp313-*", "cp314-*"]
-skip = "*-musllinux_*"
 
 [tool.cibuildwheel.linux]
-archs = ["x86_64", "aarch64"]
+archs = ["x86_64", "aarch64", "i686"]
 
 [tool.cibuildwheel.macos]
 archs = ["x86_64", "arm64"]
 
 [tool.cibuildwheel.windows]
-archs = ["AMD64"]
+archs = ["AMD64", "x86"]
 
 [tool.commitizen]
 name = "cz_gitmoji"
 
 [tool.pyrefly]
-project-includes = ["src", "tests"]
+project-includes = [
+  "src",
+  "tests",
+]
 python-version = "3.10"
 python-platform = "All"
 
@@ -84,6 +86,10 @@ ignore = [
   "D212",
 ]
 per-file-ignores = { "scripts/*" = [
+  "D100",
+  "D104",
+  "T201",
+], ".github/*" = [
   "D100",
   "D104",
   "T201",
