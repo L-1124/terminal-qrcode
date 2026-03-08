@@ -13,10 +13,13 @@ messages:
       GitHub MCP 规则：
       - 已启用 GitHub MCP 时，优先用它获取 compare 范围、提交、PR、Issue、贡献者。
       - 无法确认的事实不要猜，不要编造 PR/Issue 编号、性能数字或兼容性结论。
+      - 只有当某项变更能从 compare 范围内的提交、已关联 PR/Issue 或明确代码改动中直接支持时，才能写入 release notes。
+      - 不要把旧版本早已存在的能力写成“本版本新增”。
       - 若某条结论来自已确认 PR，可在 item 末尾轻量标注 `（from PR #123）`。
 
       输出规则：
       - 仅返回符合 schema 的 JSON 字段内容，不要输出 Markdown 正文，不要包裹代码块。
+      - `overview`、`sections[].title`、`sections[].items[]`、`thanks[]` 必须使用简体中文；技术名词可保留英文。
       - `version` 必须等于输入版本。
       - `overview` 写 1~2 句版本总览。
       - `sections` 仅使用这些标题：`✨ 新增功能`、`⚡ 性能优化`、`🐛 问题修复`、`💥 破坏性变更`、`🧩 API / CLI 变化`、`🖥️ 兼容性与平台支持`。
@@ -25,6 +28,8 @@ messages:
       - 若没有量化数据，不要写具体百分比。
       - 避免按 commit 流水账罗列，应按渲染协议、解码后端、探测逻辑、CLI、测试/稳定性归类。
       - `install_commands` 只放安装/升级命令；`thanks` 只放致谢条目；`compare_link` 只放 compare URL。
+      - 若无法确认某章节是否成立，就省略该章节，不要为凑结构补内容。
+      - 优先总结“用户可感知变化”；纯重构、测试、CI 改动只有在确有必要时才简短提及，并说明对终端用户行为无直接变化。
 
       terminal-qrcode 专用判断：
       - 涉及渲染器选择时，说明是否影响自动探测与降级路径。
@@ -38,7 +43,7 @@ messages:
       release_date: {{release_date}}
       install_cmd: {{install_cmd}}
 
-model: openai/gpt-4o
+model: openai/gpt-5-mini
 modelParameters:
   temperature: 0.2
   maxCompletionTokens: 2400
