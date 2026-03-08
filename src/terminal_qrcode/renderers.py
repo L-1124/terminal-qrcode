@@ -5,13 +5,23 @@ import logging
 import math
 import os
 import subprocess
-from collections.abc import Callable, Generator, Hashable
+from collections.abc import Callable, Generator
 from functools import lru_cache
 from typing import Generic, TypeVar
 
 from colorama import just_fix_windows_console
 
-from .contracts import ColorLevelName, Matrix, RenderConfig, Renderer, TerminalCapability
+from .contracts import (
+    ColorLevelName,
+    ImageSource,
+    Matrix,
+    MatrixSource,
+    QRSource,
+    RenderConfig,
+    Renderer,
+    RendererId,
+    TerminalCapability,
+)
 from .layout import (
     _build_fit_plan,
     _cells_to_pixels,
@@ -22,7 +32,6 @@ from .layout import (
     _threshold_to_bits,
     _upscale_matrix_nn,
 )
-from .simple_image import SimpleImage
 
 logger = logging.getLogger(__name__)
 
@@ -125,7 +134,7 @@ def _should_tmux_wrap(config: RenderConfig) -> bool:
 
 
 def _tmux_wrap(sequence: str) -> str:
-    """将协议序列包裹为 tmux 可转发的 DCS 格式."""
+    """将协议序列包裹为 tmux 可转发的 DCS格式."""
     inner = sequence.replace("\x1b", "\x1b\x1b")
     return f"\x1bPtmux;{inner}\x1b\\"
 
@@ -152,11 +161,17 @@ def _resolve_integer_scale(config: RenderConfig, matrix_size: int) -> tuple[int,
 class HalfBlockRenderer:
     """半块字符降级渲染器."""
 
-    def render(self, payload: Matrix | SimpleImage, config: RenderConfig) -> Generator[str, None, None]:
-        """将矩阵渲染为半块 Unicode 字符流."""
-        if isinstance(payload, SimpleImage):
-            raise TypeError("HalfBlockRenderer only accepts matrix payload.")
-        matrix = self._normalize_matrix(payload, config)
+    def render(self, source: QRSource, config: RenderConfig) -> Generator[str, None, None]:
+        """将数据源渲染为半块 Unicode 字符流."""
+        if isinstance(source, MatrixSource):
+            matrix = self._normalize_matrix(source.matrix, config)
+        elif isinstance(source, ImageSource):
+            # 即使是 ImageSource，HalfBlock 也会由 core.py 预处理为 MatrixSource
+            # 此处加一层稳健性检查
+            raise TypeError("HalfBlockRenderer cannot render ImageSource directly.")
+        else:
+            raise TypeError(f"Unsupported source type: {type(source)}")
+
         yield from self._generate_characters(matrix, bool(config.qr.invert), config.probe.color_level)
 
     def _normalize_matrix(self, payload: Matrix, config: RenderConfig) -> Matrix:
@@ -289,17 +304,19 @@ class HalfBlockRenderer:
 class KittyRenderer:
     """Kitty 终端图形协议渲染器."""
 
-    def render(self, payload: Matrix | SimpleImage, config: RenderConfig) -> Generator[str, None, None]:
-        """根据 Kitty 图形协议渲染矩阵或原始图像."""
-        if isinstance(payload, SimpleImage):
-            image = payload.convert("RGBA")
+    def render(self, source: QRSource, config: RenderConfig) -> Generator[str, None, None]:
+        """根据 Kitty 图形协议渲染源."""
+        if isinstance(source, ImageSource):
+            image = source.image.convert("RGBA")
             plan = _build_fit_plan(config, image.width, image.height)
             display_cols = max(1, plan.display_cols)
             display_rows = max(1, plan.display_rows)
-        else:
-            size = len(payload)
+        elif isinstance(source, MatrixSource):
+            size = len(source.matrix)
             scale, display_cols, display_rows = _resolve_integer_scale(config, size)
-            image = _matrix_to_image(payload, scale, "RGBA")
+            image = _matrix_to_image(source.matrix, scale, "RGBA")
+        else:
+            raise TypeError(f"Unsupported source type: {type(source)}")
 
         # 使用 PNG 压缩传输 (f=100) 以显著减少带宽占用
         png_data = image.to_png_bytes()
@@ -331,16 +348,18 @@ class KittyRenderer:
 class ITerm2Renderer:
     """iTerm2 终端图形协议渲染器."""
 
-    def render(self, payload: Matrix | SimpleImage, config: RenderConfig) -> Generator[str, None, None]:
-        """根据 iTerm2 内联图像协议渲染矩阵或原始图像."""
-        if isinstance(payload, SimpleImage):
-            image = payload.convert("RGB")
+    def render(self, source: QRSource, config: RenderConfig) -> Generator[str, None, None]:
+        """根据 iTerm2 内联图像协议渲染源."""
+        if isinstance(source, ImageSource):
+            image = source.image.convert("RGB")
             plan = _build_fit_plan(config, image.width, image.height)
             display_cols = max(1, plan.display_cols)
-        else:
-            size = len(payload)
+        elif isinstance(source, MatrixSource):
+            size = len(source.matrix)
             scale, display_cols, _display_rows = _resolve_integer_scale(config, size)
-            image = _matrix_to_image(payload, scale, "RGB")
+            image = _matrix_to_image(source.matrix, scale, "RGB")
+        else:
+            raise TypeError(f"Unsupported source type: {type(source)}")
 
         png_data = image.to_png_bytes()
         b64_data = base64.b64encode(png_data).decode("ascii")
@@ -356,16 +375,18 @@ class ITerm2Renderer:
 class WezTermRenderer(ITerm2Renderer):
     """WezTerm 终端图形协议渲染器 (基于 iTerm2 协议增强)."""
 
-    def render(self, payload: Matrix | SimpleImage, config: RenderConfig) -> Generator[str, None, None]:
+    def render(self, source: QRSource, config: RenderConfig) -> Generator[str, None, None]:
         """根据 WezTerm 增强型的 iTerm2 内联图像协议渲染."""
-        if isinstance(payload, SimpleImage):
-            image = payload.convert("RGB")
+        if isinstance(source, ImageSource):
+            image = source.image.convert("RGB")
             plan = _build_fit_plan(config, image.width, image.height)
             display_cols = max(1, plan.display_cols)
-        else:
-            size = len(payload)
+        elif isinstance(source, MatrixSource):
+            size = len(source.matrix)
             scale, display_cols, _display_rows = _resolve_integer_scale(config, size)
-            image = _matrix_to_image(payload, scale, "RGB")
+            image = _matrix_to_image(source.matrix, scale, "RGB")
+        else:
+            raise TypeError(f"Unsupported source type: {type(source)}")
 
         png_data = image.to_png_bytes()
         b64_data = base64.b64encode(png_data).decode("ascii")
@@ -381,14 +402,16 @@ class WezTermRenderer(ITerm2Renderer):
 class SixelRenderer:
     """DEC Sixel 图形协议渲染器."""
 
-    def render(self, payload: Matrix | SimpleImage, config: RenderConfig) -> Generator[str, None, None]:
-        """根据 DEC Sixel 协议渲染矩阵或原始图像."""
-        if isinstance(payload, SimpleImage):
-            image = payload.convert("L")
-        else:
-            size = len(payload)
+    def render(self, source: QRSource, config: RenderConfig) -> Generator[str, None, None]:
+        """根据 DEC Sixel 协议渲染源."""
+        if isinstance(source, ImageSource):
+            image = source.image.convert("L")
+        elif isinstance(source, MatrixSource):
+            size = len(source.matrix)
             scale, _display_cols, _display_rows = _resolve_integer_scale(config, size)
-            image = _matrix_to_image(payload, scale, "RGB").convert("L")
+            image = _matrix_to_image(source.matrix, scale, "RGB").convert("L")
+        else:
+            raise TypeError(f"Unsupported source type: {type(source)}")
 
         width, height = image.width, image.height
         bits = _threshold_to_bits(image, threshold=128)
@@ -410,35 +433,42 @@ def _is_ssh_connection() -> bool:
 
 
 class RendererRegistry(Generic[T]):
-    """按终端能力映射渲染器工厂，支持环境自适应排序."""
+    """按标识映射渲染器工厂，支持环境自适应排序."""
 
     def __init__(
         self,
-        factories: dict[Hashable, Callable[[], T]] | None = None,
+        factories: dict[RendererId, Callable[[], T]] | None = None,
         *,
         fallback_factory: Callable[[], T],
     ) -> None:
         """初始化渲染器注册表."""
-        self._factories: dict[Hashable, Callable[[], T]] = dict(factories or {})
+        self._factories: dict[RendererId, Callable[[], T]] = dict(factories or {})
         self._fallback_factory = fallback_factory
 
-    def register(self, capability: Hashable, factory: Callable[[], T]) -> None:
-        """注册 capability 对应的渲染器工厂."""
-        self._factories[capability] = factory
+    def register(self, renderer_id: RendererId, factory: Callable[[], T]) -> None:
+        """注册 renderer_id 对应的渲染器工厂."""
+        self._factories[renderer_id] = factory
 
-    def get(self, capability: Hashable) -> T:
-        """获取 capability 对应渲染器，不存在时回退默认工厂."""
-        factory = self._factories.get(capability, self._fallback_factory)
+    def get(self, renderer_id: RendererId) -> T:
+        """获取 renderer_id 对应渲染器，不存在时回退默认工厂."""
+        factory = self._factories.get(renderer_id, self._fallback_factory)
         return factory()
 
     def select_renderer(self, capabilities: list[TerminalCapability]) -> T:
-        """从终端探测到的能力列表中，根据当前环境（如带宽）选择最优渲染器."""
+        """根据能力列表选择最优渲染器 ID 并实例化."""
         if not capabilities:
             return self._fallback_factory()
 
-        # 定义渲染器优先级逻辑
-        # 默认情况下：图形协议越先进越优先 (Kitty > iTerm2/WezTerm > Sixel)
-        # 在 SSH 等高延迟、低带宽环境下：Sixel 因其高效的 RLE 压缩，往往比 PNG 传输更为紧凑
+        # 能力到协议 ID 的映射表
+        cap_map = {
+            TerminalCapability.KITTY: RendererId.KITTY,
+            TerminalCapability.WEZTERM: RendererId.WEZTERM,
+            TerminalCapability.ITERM2: RendererId.ITERM2,
+            TerminalCapability.SIXEL: RendererId.SIXEL,
+            TerminalCapability.FALLBACK: RendererId.HALFBLOCK,
+        }
+
+        # 优先级逻辑（支持 SSH 自适应）
         if _is_ssh_connection():
             priority = [
                 TerminalCapability.SIXEL,
@@ -458,19 +488,21 @@ class RendererRegistry(Generic[T]):
 
         for cap in priority:
             if cap in capabilities:
-                return self.get(cap)
+                renderer_id = cap_map.get(cap)
+                if renderer_id:
+                    return self.get(renderer_id)
 
         return self._fallback_factory()
 
 
 def build_default_renderer_registry() -> RendererRegistry[Renderer]:
-    """创建默认的 capability -> renderer 注册表."""
-    factories: dict[Hashable, Callable[[], Renderer]] = {
-        TerminalCapability.KITTY: KittyRenderer,
-        TerminalCapability.ITERM2: ITerm2Renderer,
-        TerminalCapability.WEZTERM: WezTermRenderer,
-        TerminalCapability.SIXEL: SixelRenderer,
-        TerminalCapability.FALLBACK: HalfBlockRenderer,
+    """创建默认的 RendererId -> renderer 注册表."""
+    factories: dict[RendererId, Callable[[], Renderer]] = {
+        RendererId.KITTY: KittyRenderer,
+        RendererId.ITERM2: ITerm2Renderer,
+        RendererId.WEZTERM: WezTermRenderer,
+        RendererId.SIXEL: SixelRenderer,
+        RendererId.HALFBLOCK: HalfBlockRenderer,
     }
     return RendererRegistry(factories, fallback_factory=HalfBlockRenderer)
 

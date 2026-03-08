@@ -2,8 +2,8 @@
 
 from pathlib import Path
 
-from terminal_qrcode.contracts import QRConfig
-from terminal_qrcode.core import RenderConfig, RenderRequest, TerminalCapability, _resolve_render_payload
+from terminal_qrcode.contracts import ImageSource, MatrixSource, QRConfig
+from terminal_qrcode.core import RenderConfig, RenderRequest, TerminalCapability, _resolve_qr_source
 from terminal_qrcode.simple_image import SimpleImage
 
 
@@ -16,14 +16,16 @@ def test_resolve_payload_canonical_default():
     request = RenderRequest(payload=img, config=config, source="test")
 
     # 模拟 Kitty 终端
-    payload = _resolve_render_payload(request, TerminalCapability.KITTY)
+    source = _resolve_qr_source(request, TerminalCapability.KITTY)
 
-    # 默认应返回矩阵 (list of lists)
-    assert isinstance(payload, list)
-    assert isinstance(payload[0], list)
-    assert isinstance(payload[0][0], bool)
+    # 默认应返回 MatrixSource
+    assert isinstance(source, MatrixSource)
+    matrix = source.matrix
+    assert isinstance(matrix, list)
+    assert isinstance(matrix[0], list)
+    assert isinstance(matrix[0][0], bool)
     # qr_url_basic.png 实际上是 version 4 (33x33)，加 4*2 border 后应为 41x41
-    assert len(payload) == 41
+    assert len(matrix) == 41
 
 
 def test_resolve_payload_preserve_source():
@@ -36,11 +38,12 @@ def test_resolve_payload_preserve_source():
     request = RenderRequest(payload=img, config=config, source="test")
 
     # 模拟 Kitty 终端
-    payload = _resolve_render_payload(request, TerminalCapability.KITTY)
+    source = _resolve_qr_source(request, TerminalCapability.KITTY)
 
-    # 应返回原始 SimpleImage 对象
-    assert isinstance(payload, SimpleImage)
-    assert payload.width == img.width
+    # 应返回 ImageSource 对象
+    assert isinstance(source, ImageSource)
+    assert source.image.width == img.width
+    assert source.is_original is True
 
 
 def test_resolve_payload_preserve_source_fallback_still_canonical():
@@ -52,7 +55,7 @@ def test_resolve_payload_preserve_source_fallback_still_canonical():
     request = RenderRequest(payload=img, config=config, source="test")
 
     # 模拟 FALLBACK 终端（不支持图形协议）
-    payload = _resolve_render_payload(request, TerminalCapability.FALLBACK)
+    source = _resolve_qr_source(request, TerminalCapability.FALLBACK)
 
-    # 仍应返回矩阵，因为 SimpleImage 无法直接由 HalfBlockRenderer 渲染
-    assert isinstance(payload, list)
+    # 仍应返回 MatrixSource，因为 SimpleImage 无法直接由 HalfBlockRenderer 渲染
+    assert isinstance(source, MatrixSource)

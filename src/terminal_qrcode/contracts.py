@@ -119,10 +119,42 @@ class RenderRequest:
     source: str
 
 
+class RendererId(Enum):
+    """渲染器协议标识（与终端能力解耦）."""
+
+    KITTY = "kitty"
+    ITERM2 = "iterm2"
+    WEZTERM = "wezterm"
+    SIXEL = "sixel"
+    HALFBLOCK = "halfblock"
+
+
+@dataclass(frozen=True)
+class QRSource:
+    """渲染数据源抽象."""
+
+    pass
+
+
+@dataclass(frozen=True)
+class MatrixSource(QRSource):
+    """规范化矩阵源."""
+
+    matrix: "Matrix"
+
+
+@dataclass(frozen=True)
+class ImageSource(QRSource):
+    """图像源."""
+
+    image: "SimpleImage"
+    is_original: bool = False  # 是否为未经改动的原始用户输入图像
+
+
 @runtime_checkable
 class Renderer(Protocol):
     """渲染器协议."""
 
-    def render(self, payload: "Matrix | SimpleImage", config: RenderConfig) -> Generator[str, None, None]:
-        """流式分片渲染二维码矩阵或图像."""
+    def render(self, source: QRSource, config: RenderConfig) -> Generator[str, None, None]:
+        """流式分片渲染二维码源."""
         ...

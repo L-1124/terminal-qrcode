@@ -8,11 +8,15 @@ from .contracts import (
     ColorLevelName,
     ImageInput,
     ImageProtocol,
+    ImageSource,
     ImageWrapperProtocol,
     Matrix,
+    MatrixSource,
     PixelMode,
+    QRSource,
     RenderConfig,
     Renderer,
+    RendererId,
     RenderRequest,
     TerminalCapabilities,
     TerminalCapability,
@@ -218,49 +222,73 @@ def _normalize_request(
     return RenderRequest(payload=payload, config=final_config, source=source)
 
 
-def _resolve_render_payload(request: RenderRequest, capability: TerminalCapability) -> Matrix | SimpleImage:
-    """根据请求和终端能力解析最终渲染载荷."""
+def _resolve_qr_source(request: RenderRequest, capability: TerminalCapability) -> QRSource:
+    """根据请求和终端能力解析最终渲染源."""
     payload = request.payload
     config = request.config
 
     if isinstance(payload, list):
         _validate_matrix_shape(payload)
-        return [list(row) for row in payload]
+        return MatrixSource(matrix=[list(row) for row in payload])
 
     image_payload = _to_simple_image(payload)
     matrix = _restore_qr_matrix(image_payload, config)
     if matrix is None:
         raise ValueError("Failed to decode QR matrix from image. Input must be a valid machine-generated QR code.")
 
-    if config.qr.preserve_source and capability in {
+    # 图形终端策略
+    if capability in {
         TerminalCapability.KITTY,
         TerminalCapability.ITERM2,
         TerminalCapability.WEZTERM,
         TerminalCapability.SIXEL,
     }:
-        return image_payload
+        if config.qr.preserve_source:
+            return ImageSource(image=image_payload, is_original=True)
 
-    return _pad_border(matrix, config.qr.border)
+        # 默认返回补边矩阵源，由渲染器执行规范化重绘
+        return MatrixSource(matrix=_pad_border(matrix, config.qr.border))
+
+    # 降级终端策略：强制使用矩阵源以确保 HalfBlock 能正确渲染
+    return MatrixSource(matrix=_pad_border(matrix, config.qr.border))
 
 
 def run_pipeline(request: RenderRequest) -> Generator[str, None, None]:
-    """执行从输入到渲染输出的完整编排流程."""
+    """执行完整的探测与渲染管线."""
     final_config = request.config
     _validate_config(final_config)
     terminal_capabilities = _resolve_terminal_capabilities(final_config)
     capability = terminal_capabilities.capability
     final_color_level = _coerce_color_level(terminal_capabilities.color_level)
+
+    # 合并探测到的颜色等级
     new_probe = dataclasses.replace(final_config.probe, color_level=final_color_level)
     final_config = dataclasses.replace(final_config, probe=new_probe)
     request = dataclasses.replace(request, config=final_config)
-    render_payload = _resolve_render_payload(request, capability)
-    renderer = DEFAULT_RENDERER_REGISTRY.get(capability)
-    yield from renderer.render(render_payload, final_config)
+
+    # 解析数据源与渲染器
+    qr_source = _resolve_qr_source(request, capability)
+    registry = DEFAULT_RENDERER_REGISTRY
+
+    if final_config.probe.renderer != "auto":
+        try:
+            renderer_id = RendererId(final_config.probe.renderer.lower())
+        except ValueError:
+            renderer_id = RendererId.HALFBLOCK
+        renderer = registry.get(renderer_id)
+    else:
+        renderer = registry.select_renderer([capability])
+
+    yield from renderer.render(qr_source, final_config)
 
 
 __all__ = [
     "RenderConfig",
     "Renderer",
+    "RendererId",
+    "QRSource",
+    "MatrixSource",
+    "ImageSource",
     "TerminalCapability",
     "run_pipeline",
     "RendererRegistry",
