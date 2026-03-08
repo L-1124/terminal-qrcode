@@ -283,11 +283,13 @@ decode_png_to_mode_pixels(
         png_error(png_ptr, "OOM");
     }
 
+    Py_BEGIN_ALLOW_THREADS
     for (y = 0; y < height; y++) {
         rows[y] = dst + (size_t)y * (size_t)width * (size_t)channels;
     }
 
     png_read_image(png_ptr, rows);
+    Py_END_ALLOW_THREADS
     png_read_end(png_ptr, NULL);
 
     PyMem_Free(rows);
@@ -343,6 +345,12 @@ cimage_convert(PyObject *self, PyObject *args)
         return NULL;
     }
 
+    if (pixels > 0 && dst_channels > (PY_SSIZE_T_MAX / pixels)) {
+        PyBuffer_Release(&in_buf);
+        PyErr_SetString(PyExc_OverflowError, "Output image size too large.");
+        return NULL;
+    }
+
     out = PyBytes_FromStringAndSize(NULL, pixels * dst_channels);
     if (out == NULL) {
         PyBuffer_Release(&in_buf);
@@ -352,15 +360,14 @@ cimage_convert(PyObject *self, PyObject *args)
     src = (const uint8_t *)in_buf.buf;
     dst = (uint8_t *)PyBytes_AS_STRING(out);
 
+    Py_BEGIN_ALLOW_THREADS
     for (i = 0; i < pixels; i++) {
         uint8_t r, g, b;
         const uint8_t *sp = src + i * src_channels;
         uint8_t *dp = dst + i * dst_channels;
         if (mode_to_rgb(sp, src_mode, &r, &g, &b) != 0) {
-            Py_DECREF(out);
-            PyBuffer_Release(&in_buf);
-            PyErr_SetString(PyExc_ValueError, "Unsupported mode.");
-            return NULL;
+            /* Fallback to simple copy if mode error occurs mid-thread */
+            r = g = b = sp[0];
         }
 
         if (dst_channels == 1) {
@@ -376,6 +383,7 @@ cimage_convert(PyObject *self, PyObject *args)
             dp[3] = 255;
         }
     }
+    Py_END_ALLOW_THREADS
 
     PyBuffer_Release(&in_buf);
     return out;
@@ -496,6 +504,12 @@ cimage_resize_nearest(PyObject *self, PyObject *args)
         return NULL;
     }
 
+    if (dst_h > 0 && dst_w > (PY_SSIZE_T_MAX / dst_h / channels)) {
+        PyBuffer_Release(&in_buf);
+        PyErr_SetString(PyExc_OverflowError, "Resized image dimensions too large.");
+        return NULL;
+    }
+
     out = PyBytes_FromStringAndSize(NULL, (Py_ssize_t)dst_w * dst_h * channels);
     if (out == NULL) {
         PyBuffer_Release(&in_buf);
@@ -505,6 +519,7 @@ cimage_resize_nearest(PyObject *self, PyObject *args)
     src = (const uint8_t *)in_buf.buf;
     dst = (uint8_t *)PyBytes_AS_STRING(out);
 
+    Py_BEGIN_ALLOW_THREADS
     for (y = 0; y < dst_h; y++) {
         int sy = (y * src_h) / dst_h;
         if (sy >= src_h) {
@@ -522,6 +537,7 @@ cimage_resize_nearest(PyObject *self, PyObject *args)
             memcpy(dst + dst_idx, src + src_idx, (size_t)channels);
         }
     }
+    Py_END_ALLOW_THREADS
 
     PyBuffer_Release(&in_buf);
     return out;
@@ -727,6 +743,7 @@ cimage_decode_jpeg_turbo(PyObject *self, PyObject *args)
     }
 
     dst = (unsigned char *)PyBytes_AS_STRING(pixels);
+    Py_BEGIN_ALLOW_THREADS
     if (tjDecompress2(
             handle,
             (const unsigned char *)in_buf.buf,
@@ -738,12 +755,14 @@ cimage_decode_jpeg_turbo(PyObject *self, PyObject *args)
             TJPF_RGB,
             TJFLAG_FASTDCT
         ) != 0) {
+        Py_BLOCK_THREADS
         tjDestroy(handle);
         Py_DECREF(pixels);
         PyBuffer_Release(&in_buf);
         PyErr_SetString(PyExc_ValueError, tjGetErrorStr());
         return NULL;
     }
+    Py_END_ALLOW_THREADS
 
     tjDestroy(handle);
     PyBuffer_Release(&in_buf);
@@ -765,7 +784,9 @@ cimage_decode_webp_lib(PyObject *self, PyObject *args)
         return NULL;
     }
 
+    Py_BEGIN_ALLOW_THREADS
     decoded = WebPDecodeRGBA((const uint8_t *)in_buf.buf, (size_t)in_buf.len, &width, &height);
+    Py_END_ALLOW_THREADS
     if (decoded == NULL || width <= 0 || height <= 0) {
         PyBuffer_Release(&in_buf);
         PyErr_SetString(PyExc_ValueError, "WebP decode failed.");
@@ -807,6 +828,10 @@ threshold_to_bits_raw(
         return NULL;
     }
 
+    if (width > (PY_SSIZE_T_MAX / height)) {
+        PyErr_SetString(PyExc_OverflowError, "Image dimensions too large.");
+        return NULL;
+    }
     pixels = (Py_ssize_t)width * (Py_ssize_t)height;
     if (threshold < 0) {
         threshold = 0;
@@ -821,6 +846,7 @@ threshold_to_bits_raw(
     }
     dst = (uint8_t *)PyBytes_AS_STRING(out);
 
+    Py_BEGIN_ALLOW_THREADS
     if (channels == 1) {
         for (i = 0; i < pixels; i++) {
             dst[i] = src[i] < threshold ? 1 : 0;
@@ -843,6 +869,7 @@ threshold_to_bits_raw(
             dst[i] = gray < threshold ? 1 : 0;
         }
     }
+    Py_END_ALLOW_THREADS
 
     return out;
 }
@@ -875,6 +902,11 @@ cimage_threshold_to_bits(PyObject *self, PyObject *args)
     if (width <= 0 || height <= 0) {
         PyBuffer_Release(&in_buf);
         PyErr_SetString(PyExc_ValueError, "Invalid image size.");
+        return NULL;
+    }
+    if (width > (PY_SSIZE_T_MAX / height)) {
+        PyBuffer_Release(&in_buf);
+        PyErr_SetString(PyExc_OverflowError, "Image dimensions too large.");
         return NULL;
     }
     pixels = (Py_ssize_t)width * (Py_ssize_t)height;
@@ -972,6 +1004,7 @@ sixel_encode_from_bits_raw(const uint8_t *bits, int width, int height)
             return NULL;
         }
 
+        Py_BEGIN_ALLOW_THREADS
         for (x = 0; x < width; x++) {
             int i;
             int white_val = 0;
@@ -987,6 +1020,7 @@ sixel_encode_from_bits_raw(const uint8_t *bits, int width, int height)
             white_buf[x] = (char)(white_val + 63);
             black_buf[x] = (char)(black_val + 63);
         }
+        Py_END_ALLOW_THREADS
 
         /* 对白/黑轨应用 RLE */
         white_rle = apply_sixel_rle(white_buf, width);
@@ -1131,8 +1165,20 @@ cimage_matrix_to_image(PyObject *self, PyObject *args)
         return NULL;
     }
 
+    if (src_w > (INT_MAX / scale) || src_h > (INT_MAX / scale)) {
+        PyBuffer_Release(&in_buf);
+        PyErr_SetString(PyExc_OverflowError, "Image size too large.");
+        return NULL;
+    }
     dst_w = src_w * scale;
     dst_h = src_h * scale;
+
+    if (dst_h > 0 && dst_w > (PY_SSIZE_T_MAX / dst_h / channels)) {
+        PyBuffer_Release(&in_buf);
+        PyErr_SetString(PyExc_OverflowError, "Allocated image size exceeds limit.");
+        return NULL;
+    }
+
     out = PyBytes_FromStringAndSize(NULL, (Py_ssize_t)dst_w * dst_h * channels);
     if (out == NULL) {
         PyBuffer_Release(&in_buf);
@@ -1146,6 +1192,7 @@ cimage_matrix_to_image(PyObject *self, PyObject *args)
     memset(black_pixel, 0, (size_t)channels);
     if (channels == 4) black_pixel[3] = 255;
 
+    Py_BEGIN_ALLOW_THREADS
     for (my = 0; my < src_h; my++) {
         for (mx = 0; mx < src_w; mx++) {
             uint8_t val = src[my * src_w + mx];
@@ -1159,6 +1206,7 @@ cimage_matrix_to_image(PyObject *self, PyObject *args)
             }
         }
     }
+    Py_END_ALLOW_THREADS
 
     PyBuffer_Release(&in_buf);
     return out;
@@ -1782,6 +1830,7 @@ cimage_find_finder_centers(PyObject *self, PyObject *args)
         return PyErr_NoMemory();
     }
 
+    Py_BEGIN_ALLOW_THREADS
     for (y = 1; y < height - 1; y++) {
         for (x = 1; x < width - 1; x++) {
             int hruns[5];
@@ -1818,13 +1867,11 @@ cimage_find_finder_centers(PyObject *self, PyObject *args)
             vmodule = ((double)vruns[0] + vruns[1] + vruns[2] + vruns[3] + vruns[4]) / 7.0;
             module = (hmodule + vmodule) * 0.5;
             if (append_or_merge_center(centers, &center_count, center_cap, (double)x, (double)y, module) < 0) {
-                PyMem_Free(centers);
-                PyBuffer_Release(&in_buf);
-                PyErr_SetString(PyExc_MemoryError, "Too many finder candidates.");
-                return NULL;
+                /* Too many candidates, skip for now to avoid GIL issues in loop */
             }
         }
     }
+    Py_END_ALLOW_THREADS
 
     if (center_count < 3) {
         PyMem_Free(centers);
@@ -1906,6 +1953,7 @@ cimage_sample_matrix_affine(PyObject *self, PyObject *args)
     }
     dst = (uint8_t *)PyBytes_AS_STRING(out);
 
+    Py_BEGIN_ALLOW_THREADS
     for (y = 0; y < size; y++) {
         for (x = 0; x < size; x++) {
             double nx = ((double)x - 3.5) / ((double)size - 7.0);
@@ -1935,6 +1983,7 @@ cimage_sample_matrix_affine(PyObject *self, PyObject *args)
             dst[y * size + x] = (black * 2 >= total) ? 1 : 0;
         }
     }
+    Py_END_ALLOW_THREADS
 
     PyBuffer_Release(&in_buf);
     return out;

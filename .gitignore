@@ -6,6 +6,9 @@ __pycache__/
 *.so
 _vendor/
 
+# AI
+.omg/
+
 # Distribution / packaging
 .Python
 build/
