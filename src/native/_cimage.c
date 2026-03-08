@@ -4,6 +4,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <stdio.h>
 #include <math.h>
 
 #include <png.h>
@@ -889,6 +890,40 @@ cimage_threshold_to_bits(PyObject *self, PyObject *args)
     return out;
 }
 
+static char *
+apply_sixel_rle(const char *buf, int len)
+{
+    char *out = (char *)PyMem_Malloc((size_t)(len * 2 + 1));
+    int out_idx = 0;
+    int i = 0;
+
+    if (out == NULL) {
+        return NULL;
+    }
+
+    while (i < len) {
+        char ch = buf[i];
+        int count = 1;
+        /* 计算连续相同字符数量 */
+        while (i + count < len && buf[i + count] == ch && count < 255) {
+            count++;
+        }
+
+        if (count >= 4) {
+            /* 4 个或以上相同字符使用 RLE: !n<char> */
+            out_idx += snprintf(out + out_idx, (size_t)(len * 2 + 1 - out_idx), "!%d%c", count, ch);
+        } else {
+            /* 少于 4 个直接输出 */
+            for (int j = 0; j < count; j++) {
+                out[out_idx++] = ch;
+            }
+        }
+        i += count;
+    }
+    out[out_idx] = '\0';
+    return out;
+}
+
 static PyObject *
 sixel_encode_from_bits_raw(const uint8_t *bits, int width, int height)
 {
@@ -906,15 +941,17 @@ sixel_encode_from_bits_raw(const uint8_t *bits, int width, int height)
         int max_i = (height - y) < 6 ? (height - y) : 6;
         PyObject *white_prefix = PyUnicode_FromString("#0");
         PyObject *white_line = NULL;
+        PyObject *rle_white_line = NULL;
         PyObject *dollar = PyUnicode_FromString("$");
         PyObject *black_prefix = PyUnicode_FromString("#1");
         PyObject *black_line = NULL;
+        PyObject *rle_black_line = NULL;
         PyObject *dash = PyUnicode_FromString("-");
         char *white_buf = (char *)PyMem_Malloc((size_t)width + 1U);
         char *black_buf = (char *)PyMem_Malloc((size_t)width + 1U);
+        char *white_rle = NULL;
+        char *black_rle = NULL;
         int x;
-        int white_end;
-        int black_end;
 
         if (
             white_prefix == NULL || dollar == NULL || black_prefix == NULL || dash == NULL
@@ -951,39 +988,46 @@ sixel_encode_from_bits_raw(const uint8_t *bits, int width, int height)
             black_buf[x] = (char)(black_val + 63);
         }
 
-        white_end = width;
-        black_end = width;
-        while (white_end > 0 && white_buf[white_end - 1] == '?') {
-            white_end--;
-        }
-        while (black_end > 0 && black_buf[black_end - 1] == '?') {
-            black_end--;
-        }
+        /* 对白/黑轨应用 RLE */
+        white_rle = apply_sixel_rle(white_buf, width);
+        black_rle = apply_sixel_rle(black_buf, width);
 
-        white_line = PyUnicode_FromStringAndSize(white_buf, white_end);
-        black_line = PyUnicode_FromStringAndSize(black_buf, black_end);
-        PyMem_Free(white_buf);
-        PyMem_Free(black_buf);
-
-        if (white_line == NULL || black_line == NULL) {
-            Py_XDECREF(white_prefix);
-            Py_XDECREF(white_line);
-            Py_XDECREF(dollar);
-            Py_XDECREF(black_prefix);
-            Py_XDECREF(black_line);
-            Py_XDECREF(dash);
+        if (white_rle == NULL || black_rle == NULL) {
+            PyMem_Free(white_buf);
+            PyMem_Free(black_buf);
+            Py_DECREF(white_prefix);
+            Py_DECREF(dollar);
+            Py_DECREF(black_prefix);
+            Py_DECREF(dash);
             Py_DECREF(parts);
+            PyErr_NoMemory();
             return NULL;
         }
 
-        if (
-            PyList_Append(parts, white_prefix) < 0
-            || (white_end > 0 && PyList_Append(parts, white_line) < 0)
-            || PyList_Append(parts, dollar) < 0
-            || PyList_Append(parts, black_prefix) < 0
-            || (black_end > 0 && PyList_Append(parts, black_line) < 0)
-            || PyList_Append(parts, dash) < 0
-        ) {
+        white_line = PyUnicode_FromString(white_rle);
+        black_line = PyUnicode_FromString(black_rle);
+        PyMem_Free(white_rle);
+        PyMem_Free(black_rle);
+
+        if (white_line == NULL || black_line == NULL) {
+            Py_XDECREF(white_line);
+            Py_XDECREF(black_line);
+            Py_DECREF(white_prefix);
+            Py_DECREF(dollar);
+            Py_DECREF(black_prefix);
+            Py_DECREF(dash);
+            Py_DECREF(parts);
+            PyErr_NoMemory();
+            return NULL;
+        }
+
+        PyMem_Free(white_buf);
+        PyMem_Free(black_buf);
+
+        /* 总是输出两条轨：白轨、$分隔符、黑轨、-结束符 */
+        if (PyList_Append(parts, white_prefix) < 0 || PyList_Append(parts, white_line) < 0
+            || PyList_Append(parts, dollar) < 0 || PyList_Append(parts, black_prefix) < 0
+            || PyList_Append(parts, black_line) < 0 || PyList_Append(parts, dash) < 0) {
             Py_DECREF(white_prefix);
             Py_DECREF(white_line);
             Py_DECREF(dollar);
@@ -994,11 +1038,11 @@ sixel_encode_from_bits_raw(const uint8_t *bits, int width, int height)
             return NULL;
         }
 
-        Py_DECREF(white_prefix);
-        Py_DECREF(white_line);
+        Py_XDECREF(white_prefix);
+        Py_XDECREF(white_line);
         Py_DECREF(dollar);
-        Py_DECREF(black_prefix);
-        Py_DECREF(black_line);
+        Py_XDECREF(black_prefix);
+        Py_XDECREF(black_line);
         Py_DECREF(dash);
     }
 

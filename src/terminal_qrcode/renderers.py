@@ -237,11 +237,18 @@ class HalfBlockRenderer:
                 if invert_for_render:
                     top, bottom = not top, not bottom
 
-                # 计算当前 cell 的前景/背景颜色
-                fg_dark = bool(top)
-                bg_dark = bool(bottom)
-                char_idx = (int(top) << 1) | int(bottom)
-                char = _HALFBLOCK_CHARS[char_idx]
+                # 有颜色时统一用 "▀"，无颜色时根据上下选择字符
+                if color_enabled:
+                    # 对 halfblock "▀" 字符：前景色=上半块，背景色=下半块
+                    fg_dark = bool(top)
+                    bg_dark = bool(bottom)
+                    char = "▀"
+                else:
+                    # 无颜色时根据 top/bottom 组合选择字符
+                    char_idx = (int(top) << 1) | int(bottom)
+                    char = _HALFBLOCK_CHARS[char_idx]
+                    fg_dark = False
+                    bg_dark = False
 
                 # 检查是否需要发送新的 SGR（颜色改变或运行结束）
                 if color_enabled and (fg_dark != last_fg_dark or bg_dark != last_bg_dark):
