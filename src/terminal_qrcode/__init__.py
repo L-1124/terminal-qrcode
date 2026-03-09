@@ -1,13 +1,15 @@
 """终端二维码渲染库."""
 
-from collections.abc import Iterable, Iterator
+import sys
+from collections.abc import Iterator
 from pathlib import Path
-from typing import overload
+from typing import TextIO, overload
 
 from . import core
 from .contracts import (
     ImageInput,
     RendererOption,
+    RenderRequest,
 )
 from .simple_image import SimpleImage
 
@@ -42,19 +44,33 @@ def _build_overrides(
 
 
 class DrawOutput:
-    """`draw` 的包装结果，支持迭代与直接字符串输出."""
+    """`draw` 的包装结果，支持迭代与直接终端输出."""
 
-    def __init__(self, chunks: Iterable[str]) -> None:
-        """初始化输出包装器."""
-        self._source: Iterator[str] = iter(chunks)
+    def __init__(self, request: RenderRequest) -> None:
+        """
+        初始化输出包装器.
+
+        Args:
+            request: 延迟执行的统一渲染请求.
+
+        """
+        self._request = request
+        self._source: Iterator[str] | None = None
         self._cache: list[str] = []
         self._exhausted = False
+        self._rich_cache = None
+
+    def _ensure_source(self) -> Iterator[str]:
+        """按需启动渲染管线."""
+        if self._source is None:
+            self._source = iter(core.run_pipeline(self._request))
+        return self._source
 
     def _drain(self) -> None:
         """消费剩余分片并缓存."""
         if self._exhausted:
             return
-        for chunk in self._source:
+        for chunk in self._ensure_source():
             self._cache.append(chunk)
         self._exhausted = True
 
@@ -68,7 +84,7 @@ class DrawOutput:
             if self._exhausted:
                 return
             try:
-                chunk = next(self._source)
+                chunk = next(self._ensure_source())
             except StopIteration:
                 self._exhausted = True
                 return
@@ -76,14 +92,57 @@ class DrawOutput:
             idx += 1
             yield chunk
 
-    def __str__(self) -> str:
-        """返回完整输出字符串."""
-        self._drain()
-        return "".join(self._cache)
+    def print(self, *, file: TextIO | None = None, end: str = "", flush: bool = True) -> None:
+        """
+        将输出原样写入文本流.
+
+        Args:
+            file: 目标文本流，未提供时写入标准输出.
+            end: 追加在输出末尾的文本.
+            flush: 写入后是否立即刷新目标流.
+
+        """
+        stream = sys.stdout if file is None else file
+        for chunk in self:
+            stream.write(chunk)
+        if end:
+            stream.write(end)
+        if flush:
+            stream.flush()
+
+    def __rich__(self):
+        """为 Rich 返回固定 halfblock 路径的文本渲染结果，不受 renderer 参数影响."""
+        from rich.text import Text
+
+        if self._rich_cache is not None:
+            return self._rich_cache
+
+        rich_request = core._normalize_request(
+            self._request.payload,
+            source=self._request.source,
+            config=self._request.config,
+            overrides={"renderer": "halfblock", "preserve_source": False},
+        )
+        output = "".join(core.run_pipeline(rich_request))
+        self._rich_cache = Text.from_ansi(output)
+        return self._rich_cache
 
     def __repr__(self) -> str:
         """调试表示."""
-        return f"DrawOutput(exhausted={self._exhausted}, cached_chunks={len(self._cache)})"
+        started = self._source is not None
+        payload_type = type(self._request.payload).__name__
+        renderer = self._request.config.probe.renderer
+        source = self._request.source
+        return (
+            "DrawOutput("
+            f"source={source!r}, "
+            f"payload_type={payload_type!r}, "
+            f"renderer={renderer!r}, "
+            f"started={started}, "
+            f"exhausted={self._exhausted}, "
+            f"cached_chunks={len(self._cache)}"
+            ")"
+        )
 
 
 @overload
@@ -148,13 +207,13 @@ def draw(
         preserve_source: 是否在图形协议终端下尝试保留并直接渲染原始图像.
 
     Returns:
-        支持分片迭代与直接字符串输出的包装对象.
+        支持分片迭代与直接终端输出的包装对象.
 
     Examples:
         直接输出完整结果:
 
         >>> from terminal_qrcode import draw
-        >>> print(draw("qrcode.png"))
+        >>> draw("qrcode.png").print()
 
         以分片流式处理输出:
 
@@ -165,7 +224,13 @@ def draw(
         从内存字节输入:
 
         >>> png_bytes = b"..."
-        >>> text = str(draw(png_bytes, renderer="halfblock"))
+        >>> out = draw(png_bytes, renderer="halfblock")
+        >>> out.print()
+
+        支持 Rich 渲染（`__rich__` 固定使用 `halfblock`，不受 `renderer` 参数影响）:
+        >>> from rich.console import Console
+        >>> console = Console()
+        >>> console.print(draw("qrcode.png"))
 
     """
     if isinstance(payload, (str, Path)):
@@ -188,4 +253,4 @@ def draw(
         preserve_source=preserve_source,
     )
     request = core._normalize_request(payload, source=source, overrides=overrides)
-    return DrawOutput(core.run_pipeline(request))
+    return DrawOutput(request)

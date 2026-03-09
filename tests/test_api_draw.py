@@ -1,5 +1,6 @@
 """对外 draw API 测试."""
 
+import io
 import os
 from pathlib import Path
 from typing import Any
@@ -114,8 +115,24 @@ def test_draw_delegates_to_pipeline(mock_run_pipeline):
 
 
 @patch("terminal_qrcode.core.run_pipeline")
+def test_draw_defers_pipeline_until_consumed(mock_run_pipeline):
+    """验证 draw 在消费输出前不会启动 pipeline."""
+
+    def _gen():
+        yield "from_pipeline"
+
+    mock_run_pipeline.return_value = _gen()
+    img = _render_matrix_to_image(_build_qr_like_matrix())
+    result = draw(img)
+
+    mock_run_pipeline.assert_not_called()
+    assert list(result) == ["from_pipeline"]
+    mock_run_pipeline.assert_called_once()
+
+
+@patch("terminal_qrcode.core.run_pipeline")
 def test_draw_result_supports_str_and_iteration(mock_run_pipeline):
-    """验证 draw 返回对象支持字符串化与迭代."""
+    """验证 draw 返回对象支持 print 与迭代."""
 
     def _gen():
         yield "a"
@@ -124,9 +141,51 @@ def test_draw_result_supports_str_and_iteration(mock_run_pipeline):
     mock_run_pipeline.return_value = _gen()
     img = _render_matrix_to_image(_build_qr_like_matrix())
     result = draw(img)
+    buffer = io.StringIO()
 
-    assert str(result) == "ab"
+    result.print(file=buffer, flush=False)
+    assert buffer.getvalue() == "ab"
     assert list(result) == ["a", "b"]
+
+
+@patch("terminal_qrcode.core.run_pipeline")
+def test_draw_result_rich_builds_halfblock_request(mock_run_pipeline):
+    """验证 __rich__ 会重新构建固定 halfblock 的请求."""
+    rich_text_mod = pytest.importorskip("rich.text")
+
+    def _gen():
+        yield "\x1b[30;47m▀▀\x1b[0m"
+
+    mock_run_pipeline.return_value = _gen()
+    img = _render_matrix_to_image(_build_qr_like_matrix())
+    result = draw(img, renderer="kitty", preserve_source=True)
+
+    rich_renderable = result.__rich__()
+
+    assert isinstance(rich_renderable, rich_text_mod.Text)
+    request = mock_run_pipeline.call_args.args[0]
+    assert request.config.probe.renderer == "halfblock"
+    assert request.config.qr.preserve_source is False
+
+
+@patch("terminal_qrcode.core.run_pipeline")
+def test_draw_result_rich_uses_cached_renderable(mock_run_pipeline):
+    """验证 __rich__ 重复调用时复用缓存结果."""
+    rich_text_mod = pytest.importorskip("rich.text")
+
+    def _gen():
+        yield "\x1b[30;47m▀▀\x1b[0m"
+
+    mock_run_pipeline.return_value = _gen()
+    img = _render_matrix_to_image(_build_qr_like_matrix())
+    result = draw(img, renderer="kitty")
+
+    first = result.__rich__()
+    second = result.__rich__()
+
+    assert isinstance(first, rich_text_mod.Text)
+    assert first is second
+    assert mock_run_pipeline.call_count == 1
 
 
 @patch("terminal_qrcode.renderers.HalfBlockRenderer.render")
@@ -210,20 +269,20 @@ def test_draw_rejects_non_qr_image_with_value_error():
     """验证非二维码图像输入会硬中断抛 ValueError."""
     image = SimpleImage.new("RGB", (16, 16), color=(255, 255, 255))
     with pytest.raises(ValueError, match="Failed to decode QR matrix"):
-        _ = str(draw(image, renderer="halfblock"))
+        _ = "".join(draw(image, renderer="halfblock"))
 
 
 def test_draw_graphic_protocol_rejects_non_qr_image():
     """验证图形协议路径下非二维码图像仍会硬中断."""
     image = SimpleImage.new("RGB", (8, 8), color=(12, 34, 56))
     with pytest.raises(ValueError, match="Failed to decode QR matrix"):
-        _ = str(draw(image, renderer="kitty"))
+        _ = "".join(draw(image, renderer="kitty"))
 
 
 def test_draw_graphic_protocol_can_render_raw_qr_image():
     """验证图形协议路径可直接传输原始二维码图片数据."""
     image = _render_matrix_to_image(_build_qr_like_matrix())
-    out = str(draw(image, renderer="kitty"))
+    out = "".join(draw(image, renderer="kitty"))
     assert out.startswith("\x1b_G")
 
 

@@ -45,7 +45,7 @@ def test_draw_accepts_qrcode_pillow_image():
     qr.make(fit=True)
     image = qr.make_image(fill_color="black", back_color="white").get_image()
 
-    output = str(draw(image, renderer="halfblock", fit=False, img_width=80))
+    output = "".join(draw(image, renderer="halfblock", fit=False, img_width=80))
     assert any(c in output for c in ("▄", "▀", "█", " "))
 
 
@@ -58,5 +58,5 @@ def test_draw_accepts_qrcode_base_image_wrapper():
     qr.make(fit=True)
     wrapped_image = qr.make_image(fill_color="black", back_color="white")
 
-    output = str(draw(wrapped_image, renderer="halfblock", fit=False, img_width=80))
+    output = "".join(draw(wrapped_image, renderer="halfblock", fit=False, img_width=80))
     assert any(c in output for c in ("▄", "▀", "█", " "))

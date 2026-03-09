@@ -13,22 +13,26 @@
 uv add terminal-qrcode
 ```
 
-开发环境（含测试与集成依赖）：
-
-```bash
-uv sync
-```
-
-## ✨ Python API
+## ✨ API
 
 ```python
 from terminal_qrcode import draw
 
-a = draw("test.png", renderer="halfblock")
-print(a)
+out = draw("test.png", renderer="halfblock")
+out.print()
 
-raw = draw("test.png")
-print(str(raw))
+graphic = draw("test.png")
+graphic.print()
+```
+
+配合 Rich 使用时，`console.print(draw(...))` 会强制走 `halfblock` 文本渲染
+
+```python
+from rich.console import Console
+from terminal_qrcode import draw
+
+console = Console()
+console.print(draw("test.png"))
 ```
 
 ## 🖼️ 支持图片格式
