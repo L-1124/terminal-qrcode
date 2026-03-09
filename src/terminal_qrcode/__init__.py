@@ -13,7 +13,7 @@ from .contracts import (
 )
 from .simple_image import SimpleImage
 
-__version__ = "0.2.0"
+__version__ = "1.0.0"
 
 
 __all__ = [
@@ -112,7 +112,7 @@ class DrawOutput:
 
     def __rich__(self):
         """为 Rich 返回固定 halfblock 路径的文本渲染结果，不受 renderer 参数影响."""
-        from rich.text import Text
+        from rich.text import Text  # type: ignore[import]
 
         if self._rich_cache is not None:
             return self._rich_cache

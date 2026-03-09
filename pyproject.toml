@@ -58,6 +58,7 @@ project-includes = [
 ]
 python-version = "3.10"
 python-platform = "All"
+replace-imports-with-any = ["rich"]
 
 [tool.pyright]
 pythonVersion = "3.10"

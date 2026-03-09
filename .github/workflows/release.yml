@@ -196,63 +196,11 @@ jobs:
 
       - name: Twine check
         run: uvx --from twine twine check release-dist/*
-
-      - name: Collect release notes metadata
-        id: release_notes_inputs
-        shell: bash
-        run: |
-          set -euo pipefail
-
-          current_tag="${GITHUB_REF_NAME}"
-          release_date="$(date -u +%F)"
-          echo "version=${current_tag#v}" >> "${GITHUB_OUTPUT}"
-          echo "release_date=${release_date}" >> "${GITHUB_OUTPUT}"
-
-      - name: Validate GitHub MCP token
-        shell: bash
-        env:
-          MCP_PAT: ${{ secrets.MCP_PAT }}
-        run: |
-          if [ -z "${MCP_PAT}" ]; then
-            echo "::error::Missing secret MCP_PAT. GitHub MCP requires a Personal Access Token (PAT)."
-            exit 1
-          fi
-
-      - name: Generate release notes with AI Inference
-        id: ai_release_notes
-        uses: actions/ai-inference@v1
-        with:
-          prompt-file: .github/prompts/release-notes.prompt.yml
-          input: |
-            version: ${{ steps.release_notes_inputs.outputs.version }}
-            release_date: ${{ steps.release_notes_inputs.outputs.release_date }}
-            install_cmd: uv add terminal-qrcode
-          max-tokens: 2400
-          enable-github-mcp: true
-          github-mcp-token: ${{ secrets.MCP_PAT }}
-
-      - name: Save generated release notes JSON
-        shell: bash
-        run: |
-          cp "${{ steps.ai_release_notes.outputs.response-file }}" release-notes.json
-
-      - name: Validate generated release notes JSON
-        shell: bash
-        run: |
-          jq . release-notes.json > /dev/null
-
-      - name: Render release notes markdown
-        run: |
-          uv run --no-project python .github/scripts/render_release_notes.py \
-            --input release-notes.json \
-            --output release-notes.md
-
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           draft: true
           generate_release_notes: false
-          body_path: release-notes.md
 
       - name: Publish to PyPI (Trusted Publisher)
         uses: pypa/gh-action-pypi-publish@release/v1
