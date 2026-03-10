@@ -80,6 +80,7 @@ class TerminalCapabilities:
 
     capability: TerminalCapability
     color_level: TerminalColorLevel
+    available_capabilities: tuple[TerminalCapability, ...] = ()
 
 
 @runtime_checkable
@@ -138,7 +139,7 @@ class QRSource:
 
 @dataclass(frozen=True)
 class MatrixSource(QRSource):
-    """规范化矩阵源."""
+    """规范化 QR 方阵源."""
 
     matrix: "Matrix"
 

@@ -83,23 +83,30 @@ def _resolve_capability(config: RenderConfig) -> TerminalCapability:
 def _resolve_terminal_capabilities(config: RenderConfig) -> TerminalCapabilities:
     """解析最终终端能力快照."""
     if config.probe.renderer != "auto" and config.probe.color_level != "auto":
+        capability = _resolve_capability(config)
         return TerminalCapabilities(
-            capability=_resolve_capability(config),
+            capability=capability,
             color_level=TerminalColorLevel[config.probe.color_level.upper()],
+            available_capabilities=(capability,),
         )
 
     from .probe import TerminalProbe
 
     probe = TerminalProbe()
     if config.probe.renderer != "auto":
+        capability = _resolve_capability(config)
         return TerminalCapabilities(
-            capability=_resolve_capability(config),
+            capability=capability,
             color_level=probe.probe_color(timeout=config.probe.timeout),
+            available_capabilities=(capability,),
         )
     if config.probe.color_level != "auto":
+        capabilities = probe.probe_available_capabilities(timeout=config.probe.timeout)
+        capability = capabilities[0] if capabilities else TerminalCapability.FALLBACK
         return TerminalCapabilities(
-            capability=probe.probe(timeout=config.probe.timeout),
+            capability=capability,
             color_level=TerminalColorLevel[config.probe.color_level.upper()],
+            available_capabilities=capabilities,
         )
     return probe.capabilities(timeout=config.probe.timeout)
 
@@ -176,9 +183,14 @@ def _validate_matrix_shape(matrix: Matrix) -> None:
     width = len(matrix[0])
     if width <= 0:
         raise TypeError("payload matrix rows must not be empty.")
+    if len(matrix) != width:
+        raise TypeError("payload matrix must be a square QR matrix.")
     for row in matrix:
         if len(row) != width:
             raise TypeError("payload matrix rows must have consistent width.")
+        for cell in row:
+            if type(cell) is not bool:
+                raise TypeError("payload matrix cells must be bool values.")
 
 
 def _to_render_matrix(payload: ImageInput, config: RenderConfig) -> Matrix:
@@ -244,6 +256,10 @@ def _resolve_qr_source(request: RenderRequest, capability: TerminalCapability) -
         TerminalCapability.SIXEL,
     }:
         if config.qr.preserve_source:
+            if config.qr.invert is True:
+                raise ValueError(
+                    "invert=True is not supported when preserve_source=True uses original image passthrough."
+                )
             return ImageSource(image=image_payload, is_original=True)
 
         # 默认返回补边矩阵源，由渲染器执行规范化重绘
@@ -277,7 +293,8 @@ def run_pipeline(request: RenderRequest) -> Generator[str, None, None]:
             renderer_id = RendererId.HALFBLOCK
         renderer = registry.get(renderer_id)
     else:
-        renderer = registry.select_renderer([capability])
+        available_capabilities = terminal_capabilities.available_capabilities or (capability,)
+        renderer = registry.select_renderer(list(available_capabilities))
 
     yield from renderer.render(qr_source, final_config)
 

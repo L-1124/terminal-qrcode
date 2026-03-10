@@ -247,6 +247,16 @@ def test_probe_term_features_env_file_wins_inline():
     assert probe.probe(timeout=0.01) == TerminalCapability.ITERM2
 
 
+@patch.dict("os.environ", {"TERM_FEATURES": "F Sx"}, clear=False)
+def test_probe_available_capabilities_env_preserves_inline_and_sixel():
+    """验证 TERM_FEATURES 可同时保留 inline image 与 Sixel 能力集合."""
+    probe = TerminalProbe()
+    assert probe.probe_available_capabilities(timeout=0.01) == (
+        TerminalCapability.ITERM2,
+        TerminalCapability.SIXEL,
+    )
+
+
 @patch.dict("os.environ", {"TERM_FEATURES": "Sx"}, clear=False)
 def test_probe_term_features_env_sixel_only():
     """验证 TERM_FEATURES 仅含 Sx 时判定为 Sixel."""
@@ -324,10 +334,10 @@ def test_probe_cached_after_first_call(mock_stdin, mock_stdout, mock_raw_mode, m
 
 @patch.dict("os.environ", {"TERM": "xterm-256color"}, clear=True)
 @patch("terminal_qrcode.probe.TerminalProbe.probe_color")
-@patch("terminal_qrcode.probe.TerminalProbe.probe")
-def test_capabilities_cached_after_first_call(mock_probe, mock_probe_color):
+@patch("terminal_qrcode.probe.TerminalProbe.probe_available_capabilities")
+def test_capabilities_cached_after_first_call(mock_probe_available, mock_probe_color):
     """验证终端能力快照会整体缓存，避免重复组合探测."""
-    mock_probe.return_value = TerminalCapability.FALLBACK
+    mock_probe_available.return_value = (TerminalCapability.FALLBACK,)
     mock_probe_color.return_value = TerminalColorLevel.ANSI256
 
     probe = TerminalProbe()
@@ -337,7 +347,8 @@ def test_capabilities_cached_after_first_call(mock_probe, mock_probe_color):
     assert first == second
     assert first.capability == TerminalCapability.FALLBACK
     assert first.color_level == TerminalColorLevel.ANSI256
-    assert mock_probe.call_count == 1
+    assert first.available_capabilities == (TerminalCapability.FALLBACK,)
+    assert mock_probe_available.call_count == 1
     assert mock_probe_color.call_count == 1
 
 

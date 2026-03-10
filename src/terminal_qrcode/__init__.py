@@ -202,13 +202,13 @@ def draw(
     探测终端并生成及分片产出二维码渲染流.
 
     Args:
-        payload: 图像对象或本地图片路径（str/Path）.
+        payload: 图像对象、本地图片路径，或布尔方阵（应为 QR 矩阵）.
         renderer: 渲染器类型（auto/kitty/iterm2/wezterm/sixel/halfblock）.
         invert: 是否反转颜色.
         fit: 是否按终端列宽自动收束.
         max_cols: 最大列宽上限.
         img_width: 渲染宽度（fit=True 时仅显式指定才作为额外上限，fit=False 时未指定默认 40）.
-        preserve_source: 是否在图形协议终端下尝试保留并直接渲染原始图像.
+        preserve_source: 是否在图形协议终端下尝试保留并直接渲染原始图像；与 invert=True 不兼容.
 
     Returns:
         支持分片迭代与直接终端输出的包装对象.
@@ -284,7 +284,7 @@ def generate(
         fit: 是否按终端列宽自动收束.
         max_cols: 最大列宽上限.
         img_width: 渲染宽度.
-        preserve_source: 是否在图形协议终端下尝试保留并直接渲染原始图像.
+        preserve_source: 是否在图形协议终端下尝试保留并直接渲染原始图像；与 invert=True 不兼容.
 
     Returns:
         渲染输出包装对象.
@@ -303,10 +303,13 @@ def generate(
         "quartile": qrc.ERROR_CORRECT_Q,
         "high": qrc.ERROR_CORRECT_H,
     }
+    if error_correction not in ec_map:
+        allowed = ", ".join(ec_map)
+        raise ValueError(f"error_correction must be one of: {allowed}.")
 
     qr = qrcode.QRCode(
         version=version,
-        error_correction=ec_map.get(error_correction, qrc.ERROR_CORRECT_M),
+        error_correction=ec_map[error_correction],
         border=0,  # 由 draw/layout 统一处理边距
     )
     qr.add_data(data)

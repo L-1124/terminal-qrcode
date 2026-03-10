@@ -17,7 +17,9 @@ from terminal_qrcode.contracts import (
     ProbeConfig,
     QRConfig,
     RendererId,
+    TerminalCapabilities,
     TerminalCapability,
+    TerminalColorLevel,
 )
 from terminal_qrcode.core import (
     DEFAULT_RENDERER_REGISTRY,
@@ -285,6 +287,45 @@ def test_renderer_priority_ssh():
     with patch.dict(os.environ, {"SSH_CONNECTION": "192.168.1.1 12345 192.168.1.2 22"}):
         renderer = registry.select_renderer(caps)
         assert isinstance(renderer, SixelRenderer)
+
+
+@patch.dict("os.environ", {"SSH_CONNECTION": "192.168.1.1 12345 192.168.1.2 22"}, clear=False)
+@patch("terminal_qrcode.renderers.SixelRenderer.render")
+@patch("terminal_qrcode.renderers.ITerm2Renderer.render")
+@patch("terminal_qrcode.probe.TerminalProbe.capabilities")
+def test_draw_auto_prefers_sixel_when_snapshot_contains_inline_and_sixel(
+    mock_capabilities, mock_iterm_render, mock_sixel_render
+):
+    """验证 auto 渲染会基于完整能力快照在 SSH 下优先选择 Sixel."""
+    mock_capabilities.return_value = TerminalCapabilities(
+        capability=TerminalCapability.ITERM2,
+        color_level=TerminalColorLevel.ANSI256,
+        available_capabilities=(TerminalCapability.ITERM2, TerminalCapability.SIXEL),
+    )
+    mock_iterm_render.return_value = iter(())
+    mock_sixel_render.return_value = iter(("sixel",))
+
+    img = SimpleImage.open(_QRCODE_IMAGE_DIR / "qr_url_basic.png")
+    output = "".join(draw(img))
+
+    assert output == "sixel"
+    assert mock_sixel_render.called
+    assert not mock_iterm_render.called
+
+
+@patch("terminal_qrcode.renderers.SixelRenderer.render")
+@patch("terminal_qrcode.renderers.ITerm2Renderer.render")
+def test_draw_forced_renderer_ignores_available_capability_order(mock_iterm_render, mock_sixel_render):
+    """验证显式 renderer 仍优先于能力集合排序."""
+    mock_iterm_render.return_value = iter(("iterm",))
+    mock_sixel_render.return_value = iter(())
+
+    img = SimpleImage.open(_QRCODE_IMAGE_DIR / "qr_url_basic.png")
+    output = "".join(draw(img, renderer="iterm2"))
+
+    assert output == "iterm"
+    assert mock_iterm_render.called
+    assert not mock_sixel_render.called
 
 
 def test_renderer_priority_fallback():

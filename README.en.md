@@ -57,7 +57,7 @@ Decoding Backends:
 - Raw image bytes: `bytes` / `bytearray`
 - PIL-compatible Image objects
 - `qrcode.image.BaseImage` wrapper objects
-- Boolean Matrix: `list[list[bool]]`
+- QR Boolean Square Matrix: `list[list[bool]]`
 
 ## 💻 Supported Terminal Renderers
 

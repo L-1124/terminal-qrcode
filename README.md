@@ -57,7 +57,7 @@ console.print(generate("https://github.com"))
 - 图像字节流：`bytes` / `bytearray`
 - 兼容 PIL 的图像对象
 - `qrcode.image.BaseImage` 包装对象
-- 布尔矩阵：`list[list[bool]]`
+- QR 布尔方阵：`list[list[bool]]`
 
 ## 💻 支持的终端渲染器
 

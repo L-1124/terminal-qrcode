@@ -289,6 +289,27 @@ def test_draw_graphic_protocol_can_render_raw_qr_image():
     assert out.startswith("\x1b_G")
 
 
+def test_draw_preserve_source_rejects_invert_for_graphic_renderer():
+    """验证 preserve_source 与 invert=True 在图形协议路径下互斥."""
+    image = _render_matrix_to_image(_build_qr_like_matrix())
+    with pytest.raises(ValueError, match="invert=True is not supported"):
+        _ = "".join(draw(image, renderer="kitty", preserve_source=True, invert=True))
+
+
+def test_draw_rejects_rectangular_matrix_payload():
+    """验证 draw 会拒绝非方阵布尔矩阵输入."""
+    matrix = [[True, False, True], [False, True, False]]
+    with pytest.raises(TypeError, match="square QR matrix"):
+        _ = "".join(draw(matrix, renderer="halfblock"))
+
+
+def test_draw_rejects_non_bool_matrix_cells():
+    """验证 draw 会拒绝包含非 bool 元素的矩阵输入."""
+    payload: Any = [[True, False], [1, True]]
+    with pytest.raises(TypeError, match="cells must be bool"):
+        _ = "".join(draw(payload, renderer="halfblock"))
+
+
 @patch("terminal_qrcode.core.run_pipeline")
 def test_draw_fit_true_without_img_width_uses_none_override(mock_run_pipeline):
     """验证 draw(fit=True) 未显式传 img_width 时透传为 None."""
@@ -363,3 +384,9 @@ def test_generate_error_correction_mapping(level, expected_const):
 
             _, kwargs = mock_qr_class.call_args
             assert kwargs["error_correction"] == expected_const
+
+
+def test_generate_invalid_error_correction_raises_value_error():
+    """验证非法纠错等级会显式抛出 ValueError."""
+    with pytest.raises(ValueError, match="error_correction must be one of"):
+        generate("data", error_correction="medum")  # type: ignore[arg-type]

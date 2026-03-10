@@ -57,6 +57,7 @@ class _ColorProbeCache:
 class _CapabilitiesCache:
     key: tuple[object, ...]
     value: TerminalCapabilities
+    available_capabilities: tuple[TerminalCapability, ...]
     capability_source: str
     color_source: str
     elapsed_ms: float
@@ -80,14 +81,24 @@ class TerminalProbe:
     @staticmethod
     def _capability_from_feature_flags(has_file: bool, has_sixel: bool) -> TerminalCapability | None:
         """将 Feature Reporting 能力位映射为终端能力枚举."""
+        capabilities = TerminalProbe._capabilities_from_feature_flags(has_file, has_sixel)
+        if not capabilities:
+            return None
+        return capabilities[0]
+
+    @staticmethod
+    def _capabilities_from_feature_flags(has_file: bool, has_sixel: bool) -> tuple[TerminalCapability, ...]:
+        """将 Feature Reporting 能力位映射为终端能力集合."""
+        capabilities: list[TerminalCapability] = []
         if has_file:
             program = os.environ.get("TERM_PROGRAM", "").lower()
             if "wezterm" in program:
-                return TerminalCapability.WEZTERM
-            return TerminalCapability.ITERM2
+                capabilities.append(TerminalCapability.WEZTERM)
+            else:
+                capabilities.append(TerminalCapability.ITERM2)
         if has_sixel:
-            return TerminalCapability.SIXEL
-        return None
+            capabilities.append(TerminalCapability.SIXEL)
+        return tuple(capabilities)
 
     def _probe_term_features_env(self) -> TerminalCapability | None:
         """优先读取 TERM_FEATURES 环境变量进行强判定."""
@@ -96,6 +107,15 @@ class TerminalProbe:
             return None
         has_file, has_sixel = self._parse_term_features(feature_string)
         return self._capability_from_feature_flags(has_file, has_sixel)
+
+    def _probe_available_capabilities_env(self) -> tuple[TerminalCapability, ...] | None:
+        """优先读取 TERM_FEATURES 环境变量进行能力集合判定."""
+        feature_string = os.environ.get("TERM_FEATURES", "").strip()
+        if not feature_string:
+            return None
+        has_file, has_sixel = self._parse_term_features(feature_string)
+        capabilities = self._capabilities_from_feature_flags(has_file, has_sixel)
+        return capabilities or None
 
     def _query_capabilities(self, timeout: float, *, remaining_budget: float | None = None) -> str:
         """发送 iTerm2 Feature Reporting Capabilities 查询."""
@@ -113,6 +133,20 @@ class TerminalProbe:
             return None
         has_file, has_sixel = self._parse_term_features(match.group(1))
         return self._capability_from_feature_flags(has_file, has_sixel)
+
+    def _probe_available_capabilities_query(
+        self, timeout: float, *, remaining_budget: float | None = None
+    ) -> tuple[TerminalCapability, ...] | None:
+        """通过 Capabilities 响应解析能力集合."""
+        response = self._query_capabilities(timeout, remaining_budget=remaining_budget)
+        if not response:
+            return None
+        match = re.search(r"Capabilities=([^\x07\x1b\\]+)", response)
+        if not match:
+            return None
+        has_file, has_sixel = self._parse_term_features(match.group(1))
+        capabilities = self._capabilities_from_feature_flags(has_file, has_sixel)
+        return capabilities or None
 
     @contextlib.contextmanager
     def _raw_mode(self) -> Generator[None, None, None]:
@@ -472,6 +506,53 @@ class TerminalProbe:
         source = "tmux_conservative_fallback" if "TMUX" in os.environ else "fallback"
         return _finalize(TerminalCapability.FALLBACK, source)
 
+    def probe_available_capabilities(self, timeout: float = 0.1) -> tuple[TerminalCapability, ...]:
+        """探测终端可用渲染能力集合."""
+        env_capabilities = self._probe_available_capabilities_env()
+        if env_capabilities is not None:
+            return env_capabilities
+
+        if "KITTY_WINDOW_ID" in os.environ:
+            return (TerminalCapability.KITTY,)
+
+        if self._can_use_wezterm_heuristic():
+            return (TerminalCapability.WEZTERM,)
+
+        if not self._supports_interactive_probe():
+            return (TerminalCapability.FALLBACK,)
+
+        start = time.monotonic()
+        budget = min(timeout, self._budget_seconds())
+        with self._raw_mode():
+
+            def _remaining() -> float:
+                return max(0.0, budget - (time.monotonic() - start))
+
+            remain = _remaining()
+            if remain > 0:
+                kitty_timeout = min(remain, _STEP_TIMEOUT_KITTY_MS / 1000.0)
+                kitty_query = "\x1b_Gi=31,a=q,s=1,v=1,t=d,f=24;AAAA\x1b\\"
+                res = self._query_terminal_retry(kitty_query, kitty_timeout, remaining_budget=_remaining())
+                if "i=31;OK" in res:
+                    return (TerminalCapability.KITTY,)
+
+            remain = _remaining()
+            if remain > 0:
+                cap_timeout = min(remain, _STEP_TIMEOUT_CAP_MS / 1000.0)
+                capabilities = self._probe_available_capabilities_query(cap_timeout, remaining_budget=_remaining())
+                if capabilities is not None:
+                    return capabilities
+
+            remain = _remaining()
+            if remain > 0:
+                da1_timeout = min(remain, _STEP_TIMEOUT_DA1_MS / 1000.0)
+                da1_query = "\x1b[c"
+                res_da1 = self._query_terminal_retry(da1_query, da1_timeout, remaining_budget=_remaining())
+                if self._is_sixel_da1(res_da1):
+                    return (TerminalCapability.SIXEL,)
+
+        return (TerminalCapability.FALLBACK,)
+
     def capabilities(self, timeout: float = 0.1) -> TerminalCapabilities:
         """
         探测并缓存终端能力快照.
@@ -489,18 +570,32 @@ class TerminalProbe:
             return cache.value
 
         start = time.monotonic()
-        capability = self.probe(timeout=timeout)
+        available_capabilities = self.probe_available_capabilities(timeout=timeout)
+        capability = available_capabilities[0] if available_capabilities else TerminalCapability.FALLBACK
+        self._cache = _ProbeCache(self._cache_key(), capability, "capabilities_snapshot", 0.0)
         capability_cache = self._cache
         color_level = self.probe_color(timeout=timeout)
         color_cache = self._color_cache
-        value = TerminalCapabilities(capability=capability, color_level=color_level)
+        value = TerminalCapabilities(
+            capability=capability,
+            color_level=color_level,
+            available_capabilities=available_capabilities,
+        )
         elapsed_ms = (time.monotonic() - start) * 1000.0
         capability_source = capability_cache.probe_source if capability_cache is not None else "unknown"
         color_source = color_cache.probe_source if color_cache is not None else "unknown"
-        self._capabilities_cache = _CapabilitiesCache(key, value, capability_source, color_source, elapsed_ms)
+        self._capabilities_cache = _CapabilitiesCache(
+            key,
+            value,
+            available_capabilities,
+            capability_source,
+            color_source,
+            elapsed_ms,
+        )
         logger.debug(
-            "capabilities: capability=%s(%s) color=%s(%s) %.1fms",
+            "capabilities: capability=%s available=%s(%s) color=%s(%s) %.1fms",
             capability.name,
+            ",".join(cap.name for cap in available_capabilities),
             capability_source,
             color_level.name,
             color_source,
