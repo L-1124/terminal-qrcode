@@ -317,8 +317,11 @@ class TerminalProbe:
         """构建进程内缓存 key."""
         return (
             os.environ.get("TERM_FEATURES", ""),
+            os.environ.get("TERM", ""),
             os.environ.get("KITTY_WINDOW_ID", ""),
+            os.environ.get("ITERM_SESSION_ID", ""),
             os.environ.get("TERM_PROGRAM", ""),
+            os.environ.get("VSCODE_PID", ""),
             os.environ.get("WEZTERM_EXECUTABLE", ""),
             os.environ.get("WEZTERM_PANE", ""),
             os.environ.get("TMUX", ""),
@@ -398,7 +401,6 @@ class TerminalProbe:
         def _finalize(level: TerminalColorLevel, source: str) -> TerminalColorLevel:
             elapsed_ms = (time.monotonic() - start) * 1000.0
             self._color_cache = _ColorProbeCache(key, level, source, elapsed_ms)
-            logger.debug("color: %s (source=%s, %.1fms)", level.name, source, elapsed_ms)
             return level
 
         if os.environ.get("NO_COLOR", "").strip():
@@ -463,8 +465,15 @@ class TerminalProbe:
         if cap_from_env is not None:
             return _finalize(cap_from_env, "term_features_env")
 
-        if "KITTY_WINDOW_ID" in os.environ:
+        term = os.environ.get("TERM", "").lower()
+        if term == "xterm-kitty" or "KITTY_WINDOW_ID" in os.environ:
             return _finalize(TerminalCapability.KITTY, "kitty_env")
+
+        if "ITERM_SESSION_ID" in os.environ:
+            return _finalize(TerminalCapability.ITERM2, "iterm2_env")
+
+        if "VSCODE_PID" in os.environ:
+            return _finalize(TerminalCapability.FALLBACK, "vscode_env")
 
         if self._can_use_wezterm_heuristic():
             return _finalize(TerminalCapability.WEZTERM, "wezterm_heuristic")
@@ -512,8 +521,15 @@ class TerminalProbe:
         if env_capabilities is not None:
             return env_capabilities
 
-        if "KITTY_WINDOW_ID" in os.environ:
+        term = os.environ.get("TERM", "").lower()
+        if term == "xterm-kitty" or "KITTY_WINDOW_ID" in os.environ:
             return (TerminalCapability.KITTY,)
+
+        if "ITERM_SESSION_ID" in os.environ:
+            return (TerminalCapability.ITERM2,)
+
+        if "VSCODE_PID" in os.environ:
+            return (TerminalCapability.FALLBACK,)
 
         if self._can_use_wezterm_heuristic():
             return (TerminalCapability.WEZTERM,)

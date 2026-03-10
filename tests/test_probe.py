@@ -19,6 +19,23 @@ def _mock_terminal_size(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _isolate_probe_env(monkeypatch):
+    """清理会影响探测启发式的宿主环境变量，避免 IDE 环境污染测试."""
+    for key in (
+        "TERM_FEATURES",
+        "TERM",
+        "KITTY_WINDOW_ID",
+        "ITERM_SESSION_ID",
+        "TERM_PROGRAM",
+        "VSCODE_PID",
+        "WEZTERM_EXECUTABLE",
+        "WEZTERM_PANE",
+        "TMUX",
+    ):
+        monkeypatch.delenv(key, raising=False)
+
+
+@pytest.fixture(autouse=True)
 def _clear_probe_cache():
     """每个测试前清理 probe 缓存，避免跨用例污染."""
     TerminalProbe._cache = None
@@ -330,6 +347,25 @@ def test_probe_cached_after_first_call(mock_stdin, mock_stdout, mock_raw_mode, m
     assert probe.probe(timeout=0.2) == TerminalCapability.KITTY
     assert probe.probe(timeout=0.2) == TerminalCapability.KITTY
     assert mock_retry.call_count == 1
+
+
+@patch("terminal_qrcode.probe.TerminalProbe._query_terminal_retry")
+@patch("terminal_qrcode.probe.TerminalProbe._raw_mode")
+@patch("sys.stdout")
+@patch("sys.stdin")
+def test_probe_cache_key_tracks_new_env_heuristics(mock_stdin, mock_stdout, mock_raw_mode, mock_retry):
+    """验证启发式环境变量变化后不会命中陈旧探测缓存."""
+    mock_stdin.isatty.return_value = True
+    mock_stdout.isatty.return_value = True
+    mock_raw_mode.return_value = contextlib.nullcontext()
+    mock_retry.return_value = ""
+    probe = TerminalProbe()
+
+    with patch.dict("os.environ", {"VSCODE_PID": "1"}, clear=True):
+        assert probe.probe(timeout=0.05) == TerminalCapability.FALLBACK
+
+    with patch.dict("os.environ", {"TERM": "xterm-kitty"}, clear=True):
+        assert probe.probe(timeout=0.05) == TerminalCapability.KITTY
 
 
 @patch.dict("os.environ", {"TERM": "xterm-256color"}, clear=True)
