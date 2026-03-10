@@ -2133,7 +2133,65 @@ cimage_sample_matrix_affine(PyObject *self, PyObject *args)
     return out;
 }
 
+static PyObject *
+cimage_score_finder(PyObject *self, PyObject *args)
+{
+    Py_buffer buf;
+    int size;
+    const uint8_t *matrix;
+    int matches = 0;
+    int total = 0;
+    int origins[3][2];
+
+    (void)self;
+
+    if (!PyArg_ParseTuple(args, "y*i", &buf, &size)) {
+        return NULL;
+    }
+
+    if (size < 21 || buf.len < (Py_ssize_t)size * size) {
+        PyBuffer_Release(&buf);
+        return PyFloat_FromDouble(0.0);
+    }
+
+    matrix = (const uint8_t *)buf.buf;
+    origins[0][0] = 0; origins[0][1] = 0;
+    origins[1][0] = size - 7; origins[1][1] = 0;
+    origins[2][0] = 0; origins[2][1] = size - 7;
+
+    for (int k = 0; k < 3; k++) {
+        int ox = origins[k][0];
+        int oy = origins[k][1];
+        for (int y = 0; y < 7; y++) {
+            for (int x = 0; x < 7; x++) {
+                int val = matrix[(oy + y) * size + (ox + x)];
+                /* Expected: 
+                   Border (0, 6): dark (1)
+                   Inner (1, 5): light (0)
+                   Core (2, 3, 4): dark (1)
+                */
+                int expected;
+                if (x == 0 || x == 6 || y == 0 || y == 6) {
+                    expected = 1;
+                } else if (x == 1 || x == 5 || y == 1 || y == 5) {
+                    expected = 0;
+                } else {
+                    expected = 1;
+                }
+                if ((val ? 1 : 0) == expected) {
+                    matches++;
+                }
+                total++;
+            }
+        }
+    }
+
+    PyBuffer_Release(&buf);
+    return PyFloat_FromDouble(total > 0 ? (double)matches / total : 0.0);
+}
+
 static PyMethodDef cimage_methods[] = {
+    {"score_finder", cimage_score_finder, METH_VARARGS, "Calculate finder score for a matrix."},
     {"convert", cimage_convert, METH_VARARGS, "Convert image mode."},
     {"getbbox_nonwhite", cimage_getbbox_nonwhite, METH_VARARGS, "Get non-white bbox."},
     {"resize_nearest", cimage_resize_nearest, METH_VARARGS, "Nearest resize."},

@@ -81,28 +81,13 @@ def _infer_qr_size_from_vectors(h_len: float, v_len: float) -> int | None:
 
 
 def _finder_score(matrix: Matrix) -> float:
-    """计算三个 Finder 区域匹配得分."""
+    """计算三个 Finder 区域匹配得分 (委托给 C 扩展)."""
     size = len(matrix)
-    if size < _MIN_QR_SIZE or any(len(row) != size for row in matrix):
+    if size < _MIN_QR_SIZE:
         return 0.0
-
-    def _expected(x: int, y: int) -> bool:
-        if x in (0, 6) or y in (0, 6):
-            return True
-        if x in (1, 5) or y in (1, 5):
-            return False
-        return True
-
-    origins = ((0, 0), (size - 7, 0), (0, size - 7))
-    matches = 0
-    total = 0
-    for ox, oy in origins:
-        for y in range(7):
-            for x in range(7):
-                if matrix[oy + y][ox + x] == _expected(x, y):
-                    matches += 1
-                total += 1
-    return matches / total if total else 0.0
+    # 将 Matrix 展平为 bytes 供 C 调用
+    flat_bits = bytes(cell for row in matrix for cell in row)
+    return float(_cimage.score_finder(flat_bits, size))
 
 
 def _invert_matrix(matrix: Matrix) -> Matrix:
@@ -145,6 +130,11 @@ def strict_restore_qr_matrix(image: SimpleImage, config: RenderConfig) -> Matrix
         for i in range(size):
             start = i * size
             matrix_legacy.append([b == 1 for b in sampled[start : start + size]])
+
+        # 早期终止：若 Legacy 采样已完美匹配，则直接返回
+        if _matrix_score(matrix_legacy) >= 1.0:
+            return _auto_polarity(matrix_legacy, config.qr.invert)
+
         candidates.append(matrix_legacy)
 
     finder_variance = max(0.1, config.qr.finder_variance)

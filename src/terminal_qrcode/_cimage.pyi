@@ -135,3 +135,9 @@ def sample_matrix_affine(
     window: int,
 ) -> bytes:
     """在仿射坐标系下按窗口多数投票采样矩阵."""
+
+def score_finder(
+    matrix: bytes,
+    size: int,
+) -> float:
+    """计算二维码三个 Finder 区域的匹配得分."""
