@@ -361,26 +361,47 @@ cimage_convert(PyObject *self, PyObject *args)
     dst = (uint8_t *)PyBytes_AS_STRING(out);
 
     Py_BEGIN_ALLOW_THREADS
-    for (i = 0; i < pixels; i++) {
-        uint8_t r, g, b;
-        const uint8_t *sp = src + i * src_channels;
-        uint8_t *dp = dst + i * dst_channels;
-        if (mode_to_rgb(sp, src_mode, &r, &g, &b) != 0) {
-            /* Fallback to simple copy if mode error occurs mid-thread */
-            r = g = b = sp[0];
-        }
-
+    if (strcmp(src_mode, "L") == 0) {
         if (dst_channels == 1) {
-            dp[0] = (uint8_t)((299 * r + 587 * g + 114 * b) / 1000);
+            for (i = 0; i < pixels; i++) {
+                dst[i] = src[i];
+            }
         } else if (dst_channels == 3) {
-            dp[0] = r;
-            dp[1] = g;
-            dp[2] = b;
-        } else {
-            dp[0] = r;
-            dp[1] = g;
-            dp[2] = b;
-            dp[3] = 255;
+            for (i = 0; i < pixels; i++) {
+                dst[i*3] = dst[i*3+1] = dst[i*3+2] = src[i];
+            }
+        } else if (dst_channels == 4) {
+            for (i = 0; i < pixels; i++) {
+                dst[i*4] = dst[i*4+1] = dst[i*4+2] = src[i];
+                dst[i*4+3] = 255;
+            }
+        }
+    } else if (strcmp(src_mode, "RGB") == 0 || strcmp(src_mode, "RGBA") == 0) {
+        if (dst_channels == 1) {
+            for (i = 0; i < pixels; i++) {
+                const uint8_t *sp = src + i * src_channels;
+                dst[i] = (uint8_t)((299 * sp[0] + 587 * sp[1] + 114 * sp[2]) / 1000);
+            }
+        } else if (dst_channels == 3) {
+            if (src_channels == 3) {
+                memcpy(dst, src, (size_t)pixels * 3);
+            } else {
+                for (i = 0; i < pixels; i++) {
+                    const uint8_t *sp = src + i * 4;
+                    uint8_t *dp = dst + i * 3;
+                    dp[0] = sp[0]; dp[1] = sp[1]; dp[2] = sp[2];
+                }
+            }
+        } else if (dst_channels == 4) {
+            if (src_channels == 4) {
+                memcpy(dst, src, (size_t)pixels * 4);
+            } else {
+                for (i = 0; i < pixels; i++) {
+                    const uint8_t *sp = src + i * 3;
+                    uint8_t *dp = dst + i * 4;
+                    dp[0] = sp[0]; dp[1] = sp[1]; dp[2] = sp[2]; dp[3] = 255;
+                }
+            }
         }
     }
     Py_END_ALLOW_THREADS
@@ -480,6 +501,7 @@ cimage_resize_nearest(PyObject *self, PyObject *args)
     const uint8_t *src;
     uint8_t *dst;
     int y, x;
+    int *map_x, *map_y;
 
     (void)self;
 
@@ -519,26 +541,42 @@ cimage_resize_nearest(PyObject *self, PyObject *args)
     src = (const uint8_t *)in_buf.buf;
     dst = (uint8_t *)PyBytes_AS_STRING(out);
 
+    /* Precompute mapping tables to avoid division in inner loop */
+    map_x = (int *)PyMem_Malloc(sizeof(int) * (size_t)dst_w);
+    map_y = (int *)PyMem_Malloc(sizeof(int) * (size_t)dst_h);
+    if (map_x == NULL || map_y == NULL) {
+        Py_XDECREF(out);
+        if (map_x) PyMem_Free(map_x);
+        if (map_y) PyMem_Free(map_y);
+        PyBuffer_Release(&in_buf);
+        return PyErr_NoMemory();
+    }
+
+    for (x = 0; x < dst_w; x++) {
+        map_x[x] = (x * src_w) / dst_w;
+        if (map_x[x] >= src_w) map_x[x] = src_w - 1;
+    }
+    for (y = 0; y < dst_h; y++) {
+        map_y[y] = (y * src_h) / dst_h;
+        if (map_y[y] >= src_h) map_y[y] = src_h - 1;
+    }
+
     Py_BEGIN_ALLOW_THREADS
     for (y = 0; y < dst_h; y++) {
-        int sy = (y * src_h) / dst_h;
-        if (sy >= src_h) {
-            sy = src_h - 1;
-        }
+        int sy = map_y[y];
+        int src_row_base = sy * src_w;
+        int dst_row_base = y * dst_w;
         for (x = 0; x < dst_w; x++) {
-            int sx = (x * src_w) / dst_w;
-            int src_idx;
-            int dst_idx;
-            if (sx >= src_w) {
-                sx = src_w - 1;
-            }
-            src_idx = (sy * src_w + sx) * channels;
-            dst_idx = (y * dst_w + x) * channels;
+            int sx = map_x[x];
+            int src_idx = (src_row_base + sx) * channels;
+            int dst_idx = (dst_row_base + x) * channels;
             memcpy(dst + dst_idx, src + src_idx, (size_t)channels);
         }
     }
     Py_END_ALLOW_THREADS
 
+    PyMem_Free(map_x);
+    PyMem_Free(map_y);
     PyBuffer_Release(&in_buf);
     return out;
 }
@@ -922,6 +960,35 @@ cimage_threshold_to_bits(PyObject *self, PyObject *args)
     return out;
 }
 
+static const char *const SIXEL_RLE_LOOKUP[256] = {
+    "!0", "!1", "!2", "!3", "!4", "!5", "!6", "!7", "!8", "!9",
+    "!10", "!11", "!12", "!13", "!14", "!15", "!16", "!17", "!18", "!19",
+    "!20", "!21", "!22", "!23", "!24", "!25", "!26", "!27", "!28", "!29",
+    "!30", "!31", "!32", "!33", "!34", "!35", "!36", "!37", "!38", "!39",
+    "!40", "!41", "!42", "!43", "!44", "!45", "!46", "!47", "!48", "!49",
+    "!50", "!51", "!52", "!53", "!54", "!55", "!56", "!57", "!58", "!59",
+    "!60", "!61", "!62", "!63", "!64", "!65", "!66", "!67", "!68", "!69",
+    "!70", "!71", "!72", "!73", "!74", "!75", "!76", "!77", "!78", "!79",
+    "!80", "!81", "!82", "!83", "!84", "!85", "!86", "!87", "!88", "!89",
+    "!90", "!91", "!92", "!93", "!94", "!95", "!96", "!97", "!98", "!99",
+    "!100", "!101", "!102", "!103", "!104", "!105", "!106", "!107", "!108", "!109",
+    "!110", "!111", "!112", "!113", "!114", "!115", "!116", "!117", "!118", "!119",
+    "!120", "!121", "!122", "!123", "!124", "!125", "!126", "!127", "!128", "!129",
+    "!130", "!131", "!132", "!133", "!134", "!135", "!136", "!137", "!138", "!139",
+    "!140", "!141", "!142", "!143", "!144", "!145", "!146", "!147", "!148", "!149",
+    "!150", "!151", "!152", "!153", "!154", "!155", "!156", "!157", "!158", "!159",
+    "!160", "!161", "!162", "!163", "!164", "!165", "!166", "!167", "!168", "!169",
+    "!170", "!171", "!172", "!173", "!174", "!175", "!176", "!177", "!178", "!179",
+    "!180", "!181", "!182", "!183", "!184", "!185", "!186", "!187", "!188", "!189",
+    "!190", "!191", "!192", "!193", "!194", "!195", "!196", "!197", "!198", "!199",
+    "!200", "!201", "!202", "!203", "!204", "!205", "!206", "!207", "!208", "!209",
+    "!210", "!211", "!212", "!213", "!214", "!215", "!216", "!217", "!218", "!219",
+    "!220", "!221", "!222", "!223", "!224", "!225", "!226", "!227", "!228", "!229",
+    "!230", "!231", "!232", "!233", "!234", "!235", "!236", "!237", "!238", "!239",
+    "!240", "!241", "!242", "!243", "!244", "!245", "!246", "!247", "!248", "!249",
+    "!250", "!251", "!252", "!253", "!254", "!255"
+};
+
 static char *
 apply_sixel_rle(const char *buf, int len)
 {
@@ -943,7 +1010,11 @@ apply_sixel_rle(const char *buf, int len)
 
         if (count >= 4) {
             /* 4 个或以上相同字符使用 RLE: !n<char> */
-            out_idx += snprintf(out + out_idx, (size_t)(len * 2 + 1 - out_idx), "!%d%c", count, ch);
+            const char *prefix = SIXEL_RLE_LOOKUP[count];
+            while (*prefix) {
+                out[out_idx++] = *prefix++;
+            }
+            out[out_idx++] = ch;
         } else {
             /* 少于 4 个直接输出 */
             for (int j = 0; j < count; j++) {
@@ -1831,7 +1902,7 @@ cimage_find_finder_centers(PyObject *self, PyObject *args)
     }
 
     Py_BEGIN_ALLOW_THREADS
-    for (y = 1; y < height - 1; y++) {
+    for (y = 1; y < height - 1; y += 2) {
         for (x = 1; x < width - 1; x++) {
             int hruns[5];
             int vruns[5];
@@ -1863,12 +1934,15 @@ cimage_find_finder_centers(PyObject *self, PyObject *args)
                 continue;
             }
 
-            hmodule = ((double)hruns[0] + hruns[1] + hruns[2] + hruns[3] + hruns[4]) / 7.0;
+            hmodule = (double)total / 7.0;
             vmodule = ((double)vruns[0] + vruns[1] + vruns[2] + vruns[3] + vruns[4]) / 7.0;
             module = (hmodule + vmodule) * 0.5;
             if (append_or_merge_center(centers, &center_count, center_cap, (double)x, (double)y, module) < 0) {
                 /* Too many candidates, skip for now to avoid GIL issues in loop */
             }
+            
+            /* Optimization: skip known module width */
+            x += (int)(module * 2.0);
         }
     }
     Py_END_ALLOW_THREADS
@@ -1915,17 +1989,19 @@ cimage_sample_matrix_affine(PyObject *self, PyObject *args)
 {
     Py_buffer in_buf;
     int width, height, size;
-    double tlx, tly, hx, hy, vx, vy;
+    double tlx_d, tly_d, hx_d, hy_d, vx_d, vy_d;
     int window;
     const uint8_t *bits;
     PyObject *out;
     uint8_t *dst;
     int y, x;
     int radius;
+    int32_t tlx, tly, hx, hy, vx, vy;
+    int32_t step;
 
     (void)self;
 
-    if (!PyArg_ParseTuple(args, "y*iiiddddddi", &in_buf, &width, &height, &size, &tlx, &tly, &hx, &hy, &vx, &vy, &window)) {
+    if (!PyArg_ParseTuple(args, "y*iiiddddddi", &in_buf, &width, &height, &size, &tlx_d, &tly_d, &hx_d, &hy_d, &vx_d, &vy_d, &window)) {
         return NULL;
     }
     if (width <= 0 || height <= 0 || size <= 0 || in_buf.len != (Py_ssize_t)width * height) {
@@ -1953,15 +2029,30 @@ cimage_sample_matrix_affine(PyObject *self, PyObject *args)
     }
     dst = (uint8_t *)PyBytes_AS_STRING(out);
 
+    /* Convert to fixed point (16.16) */
+    step = (int32_t)((1.0 / ((double)size - 7.0)) * 65536.0);
+    tlx = (int32_t)((tlx_d - 3.5 / ((double)size - 7.0) * hx_d - 3.5 / ((double)size - 7.0) * vx_d) * 65536.0);
+    tly = (int32_t)((tly_d - 3.5 / ((double)size - 7.0) * hy_d - 3.5 / ((double)size - 7.0) * vy_d) * 65536.0);
+    hx = (int32_t)(hx_d * 65536.0);
+    hy = (int32_t)(hy_d * 65536.0);
+    vx = (int32_t)(vx_d * 65536.0);
+    vy = (int32_t)(vy_d * 65536.0);
+
     Py_BEGIN_ALLOW_THREADS
     for (y = 0; y < size; y++) {
+        /* Line start point in fixed point */
+        int32_t line_x = tlx + (y * vx * step >> 16);
+        int32_t line_y = tly + (y * vy * step >> 16);
+        
         for (x = 0; x < size; x++) {
-            double nx = ((double)x - 3.5) / ((double)size - 7.0);
-            double ny = ((double)y - 3.5) / ((double)size - 7.0);
-            double fx = tlx + nx * hx + ny * vx;
-            double fy = tly + nx * hy + ny * vy;
-            int cx = (int)llround(fx);
-            int cy = (int)llround(fy);
+            /* Current point in fixed point */
+            int32_t cur_fx = line_x + (x * hx * step >> 16);
+            int32_t cur_fy = line_y + (x * hy * step >> 16);
+            
+            /* Round to nearest integer */
+            int cx = (cur_fx + 32768) >> 16;
+            int cy = (cur_fy + 32768) >> 16;
+            
             int yy, xx;
             int black = 0;
             int total = 0;
