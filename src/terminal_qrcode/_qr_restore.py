@@ -3,9 +3,9 @@
 import math
 
 from . import _cimage
-from .contracts import Matrix, RenderConfig
-from .layout import _to_luma_bits
-from .simple_image import SimpleImage
+from ._contracts import Matrix, RenderConfig
+from ._layout import _to_luma_bits
+from ._simple_image import SimpleImage
 
 _MIN_QR_SIZE = 21
 _MAX_QR_SIZE = 177

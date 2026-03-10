@@ -8,8 +8,9 @@ from unittest.mock import patch
 
 import pytest
 
-from terminal_qrcode import draw, layout
-from terminal_qrcode.contracts import (
+from terminal_qrcode import _layout as layout
+from terminal_qrcode import draw
+from terminal_qrcode._contracts import (
     ColorLevelName,
     ImageSource,
     LayoutConfig,
@@ -21,13 +22,13 @@ from terminal_qrcode.contracts import (
     TerminalCapability,
     TerminalColorLevel,
 )
-from terminal_qrcode.core import (
+from terminal_qrcode._core import (
     DEFAULT_RENDERER_REGISTRY,
     RenderConfig,
     RenderRequest,
     _resolve_qr_source,
 )
-from terminal_qrcode.renderers import (
+from terminal_qrcode._renderers import (
     HalfBlockRenderer,
     ITerm2Renderer,
     KittyRenderer,
@@ -35,7 +36,7 @@ from terminal_qrcode.renderers import (
     WezTermRenderer,
     build_default_renderer_registry,
 )
-from terminal_qrcode.simple_image import SimpleImage
+from terminal_qrcode._simple_image import SimpleImage
 
 
 @pytest.fixture(autouse=True)
@@ -262,7 +263,7 @@ def test_renderer_registry_get():
 
 
 @patch.dict("os.environ", {"TMUX": "/tmp/tmux-1000/default,123,0"}, clear=False)
-@patch("terminal_qrcode.renderers._tmux_allow_passthrough", return_value=False)
+@patch("terminal_qrcode._renderers._tmux_allow_passthrough", return_value=False)
 def test_kitty_renderer_tmux_auto_disabled_not_wrapped(_mock_allow):
     """验证 Kitty 在 tmux auto 且 passthrough 关闭时不包裹."""
     matrix = _build_qr_like_matrix(size=21)
@@ -271,7 +272,7 @@ def test_kitty_renderer_tmux_auto_disabled_not_wrapped(_mock_allow):
 
 
 @patch.dict("os.environ", {"TMUX": "/tmp/tmux-1000/default,123,0"}, clear=False)
-@patch("terminal_qrcode.renderers._tmux_allow_passthrough", return_value=False)
+@patch("terminal_qrcode._renderers._tmux_allow_passthrough", return_value=False)
 def test_sixel_renderer_tmux_always_forces_wrap(_mock_allow):
     """验证 Sixel 在 tmux always 时强制包裹."""
     matrix = _build_qr_like_matrix(size=21)
@@ -304,9 +305,9 @@ def test_renderer_priority_ssh():
 
 
 @patch.dict("os.environ", {"SSH_CONNECTION": "192.168.1.1 12345 192.168.1.2 22"}, clear=False)
-@patch("terminal_qrcode.renderers.SixelRenderer.render")
-@patch("terminal_qrcode.renderers.ITerm2Renderer.render")
-@patch("terminal_qrcode.probe.TerminalProbe.capabilities")
+@patch("terminal_qrcode._renderers.SixelRenderer.render")
+@patch("terminal_qrcode._renderers.ITerm2Renderer.render")
+@patch("terminal_qrcode._probe.TerminalProbe.capabilities")
 def test_draw_auto_prefers_sixel_when_snapshot_contains_inline_and_sixel(
     mock_capabilities, mock_iterm_render, mock_sixel_render
 ):
@@ -327,8 +328,8 @@ def test_draw_auto_prefers_sixel_when_snapshot_contains_inline_and_sixel(
     assert not mock_iterm_render.called
 
 
-@patch("terminal_qrcode.renderers.SixelRenderer.render")
-@patch("terminal_qrcode.renderers.ITerm2Renderer.render")
+@patch("terminal_qrcode._renderers.SixelRenderer.render")
+@patch("terminal_qrcode._renderers.ITerm2Renderer.render")
 def test_draw_forced_renderer_ignores_available_capability_order(mock_iterm_render, mock_sixel_render):
     """验证显式 renderer 仍优先于能力集合排序."""
     mock_iterm_render.return_value = iter(("iterm",))
@@ -348,7 +349,7 @@ def test_renderer_priority_fallback():
     caps = [TerminalCapability.FALLBACK]
 
     renderer = registry.select_renderer(caps)
-    from terminal_qrcode.renderers import HalfBlockRenderer
+    from terminal_qrcode._renderers import HalfBlockRenderer
 
     assert isinstance(renderer, HalfBlockRenderer)
 

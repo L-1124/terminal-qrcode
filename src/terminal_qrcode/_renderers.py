@@ -11,7 +11,7 @@ from typing import Generic, TypeVar
 
 from colorama import just_fix_windows_console
 
-from .contracts import (
+from ._contracts import (
     ColorLevelName,
     ImageSource,
     Matrix,
@@ -22,7 +22,7 @@ from .contracts import (
     RendererId,
     TerminalCapability,
 )
-from .layout import (
+from ._layout import (
     _build_fit_plan,
     _cells_to_pixels,
     _get_cell_pixel_size,

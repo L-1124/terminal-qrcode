@@ -36,7 +36,7 @@ def main():
             datefmt="%H:%M:%S",
         )
         try:
-            from terminal_qrcode import layout
+            from terminal_qrcode import _layout as layout
 
             term_cols, term_rows = layout._get_terminal_size_cells()
             avail_cols, avail_rows = layout._get_available_cells()

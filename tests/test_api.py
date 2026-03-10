@@ -8,10 +8,11 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from terminal_qrcode import draw, generate, layout
-from terminal_qrcode.contracts import ImageProtocol, TerminalCapabilities, TerminalColorLevel
-from terminal_qrcode.core import TerminalCapability
-from terminal_qrcode.simple_image import SimpleImage
+from terminal_qrcode import _layout as layout
+from terminal_qrcode import draw, generate
+from terminal_qrcode._contracts import ImageProtocol, TerminalCapabilities, TerminalColorLevel
+from terminal_qrcode._core import TerminalCapability
+from terminal_qrcode._simple_image import SimpleImage
 
 
 @pytest.fixture(autouse=True)
@@ -81,8 +82,8 @@ class _PILLikeImage(ImageProtocol):
 # --- Tests from test_api_draw.py ---
 
 
-@patch("terminal_qrcode.renderers.HalfBlockRenderer.render")
-@patch("terminal_qrcode.probe.TerminalProbe.probe")
+@patch("terminal_qrcode._renderers.HalfBlockRenderer.render")
+@patch("terminal_qrcode._probe.TerminalProbe.probe")
 def test_draw_flat_kwargs_api(mock_probe, mock_render):
     """验证 draw 扁平参数会合并到 RenderConfig."""
     mock_probe.return_value = TerminalCapability.FALLBACK
@@ -102,7 +103,7 @@ def test_draw_flat_kwargs_api(mock_probe, mock_render):
     assert passed_config.layout.max_cols == 60
 
 
-@patch("terminal_qrcode.core.run_pipeline")
+@patch("terminal_qrcode._core.run_pipeline")
 def test_draw_delegates_to_pipeline(mock_run_pipeline):
     """验证 draw 委托给 pipeline."""
 
@@ -117,7 +118,7 @@ def test_draw_delegates_to_pipeline(mock_run_pipeline):
     mock_run_pipeline.assert_called_once()
 
 
-@patch("terminal_qrcode.core.run_pipeline")
+@patch("terminal_qrcode._core.run_pipeline")
 def test_draw_defers_pipeline_until_consumed(mock_run_pipeline):
     """验证 draw 在消费输出前不会启动 pipeline."""
 
@@ -133,7 +134,7 @@ def test_draw_defers_pipeline_until_consumed(mock_run_pipeline):
     mock_run_pipeline.assert_called_once()
 
 
-@patch("terminal_qrcode.core.run_pipeline")
+@patch("terminal_qrcode._core.run_pipeline")
 def test_draw_result_supports_str_and_iteration(mock_run_pipeline):
     """验证 draw 返回对象支持 print 与迭代."""
 
@@ -151,7 +152,7 @@ def test_draw_result_supports_str_and_iteration(mock_run_pipeline):
     assert list(result) == ["a", "b"]
 
 
-@patch("terminal_qrcode.core.run_pipeline")
+@patch("terminal_qrcode._core.run_pipeline")
 def test_draw_result_rich_builds_halfblock_request(mock_run_pipeline):
     """验证 __rich__ 会重新构建固定 halfblock 的请求."""
     rich_text_mod = pytest.importorskip("rich.text")
@@ -171,7 +172,7 @@ def test_draw_result_rich_builds_halfblock_request(mock_run_pipeline):
     assert request.config.qr.preserve_source is False
 
 
-@patch("terminal_qrcode.core.run_pipeline")
+@patch("terminal_qrcode._core.run_pipeline")
 def test_draw_result_rich_uses_cached_renderable(mock_run_pipeline):
     """验证 __rich__ 重复调用时复用缓存结果."""
     rich_text_mod = pytest.importorskip("rich.text")
@@ -191,8 +192,8 @@ def test_draw_result_rich_uses_cached_renderable(mock_run_pipeline):
     assert mock_run_pipeline.call_count == 1
 
 
-@patch("terminal_qrcode.renderers.HalfBlockRenderer.render")
-@patch("terminal_qrcode.probe.TerminalProbe.capabilities")
+@patch("terminal_qrcode._renderers.HalfBlockRenderer.render")
+@patch("terminal_qrcode._probe.TerminalProbe.capabilities")
 def test_draw_auto_detection_uses_single_capabilities_snapshot(mock_capabilities, mock_render):
     """验证 auto 路径只读取一次统一终端能力快照."""
     mock_capabilities.return_value = TerminalCapabilities(
@@ -310,7 +311,7 @@ def test_draw_rejects_non_bool_matrix_cells():
         _ = "".join(draw(payload, renderer="halfblock"))
 
 
-@patch("terminal_qrcode.core.run_pipeline")
+@patch("terminal_qrcode._core.run_pipeline")
 def test_draw_fit_true_without_img_width_uses_none_override(mock_run_pipeline):
     """验证 draw(fit=True) 未显式传 img_width 时透传为 None."""
 
@@ -341,7 +342,7 @@ def test_generate_delegates_to_qrcode_and_draw():
 
         # 调用 generate，使用 halfblock 以简化输出验证
         # 由于我们只验证委托逻辑，可以 mock 掉底层渲染
-        with patch("terminal_qrcode.core.run_pipeline") as mock_pipeline:
+        with patch("terminal_qrcode._core.run_pipeline") as mock_pipeline:
             mock_pipeline.return_value = ["chunk1", "chunk2"]
 
             output = generate("test data", renderer="halfblock", error_correction="high", version=5)
@@ -378,7 +379,7 @@ def test_generate_error_correction_mapping(level, expected_const):
         mock_qr_instance.get_matrix.return_value = [[True]]
         mock_qr_class.return_value = mock_qr_instance
 
-        with patch("terminal_qrcode.core.run_pipeline") as mock_pipeline:
+        with patch("terminal_qrcode._core.run_pipeline") as mock_pipeline:
             mock_pipeline.return_value = []
             generate("data", error_correction=level)
 

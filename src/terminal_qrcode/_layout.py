@@ -7,8 +7,8 @@ from shutil import get_terminal_size
 from typing import Any, Literal
 
 from . import _cimage
-from .contracts import RenderConfig
-from .simple_image import SimpleImage
+from ._contracts import RenderConfig
+from ._simple_image import SimpleImage
 
 if sys.platform != "win32":
     import fcntl

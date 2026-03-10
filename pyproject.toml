@@ -103,10 +103,9 @@ per-file-ignores = { "scripts/*" = [
 include-package-data = false
 
 [tool.setuptools.package-data]
-terminal_qrcode = ["*.pyi"]
-
-[tool.setuptools.packages.find]
-where = ["src"]
+terminal_qrcode = [
+  "*.pyi",
+]
 
 [tool.setuptools.dynamic]
 version = { attr = "terminal_qrcode.__version__" }
@@ -114,6 +113,6 @@ version = { attr = "terminal_qrcode.__version__" }
 [tool.uv]
 cache-keys = [
   { file = "pyproject.toml" },
-  { file = "src/native/*.c" },
+  { file = "src/terminal_qrcode/*.c" },
   { file = "setup.py" },
 ]

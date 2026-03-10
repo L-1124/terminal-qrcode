@@ -5,13 +5,13 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import Literal, TextIO, overload
 
-from . import core
-from .contracts import (
+from . import _core
+from ._contracts import (
     ImageInput,
     RendererOption,
     RenderRequest,
 )
-from .simple_image import SimpleImage
+from ._simple_image import SimpleImage
 
 __version__ = "1.0.0"
 
@@ -67,7 +67,7 @@ class DrawOutput:
     def _ensure_source(self) -> Iterator[str]:
         """按需启动渲染管线."""
         if self._source is None:
-            self._source = iter(core.run_pipeline(self._request))
+            self._source = iter(_core.run_pipeline(self._request))
         return self._source
 
     def _drain(self) -> None:
@@ -121,13 +121,13 @@ class DrawOutput:
         if self._rich_cache is not None:
             return self._rich_cache
 
-        rich_request = core._normalize_request(
+        rich_request = _core._normalize_request(
             self._request.payload,
             source=self._request.source,
             config=self._request.config,
             overrides={"renderer": "halfblock", "preserve_source": False},
         )
-        output = "".join(core.run_pipeline(rich_request))
+        output = "".join(_core.run_pipeline(rich_request))
         self._rich_cache = Text.from_ansi(output)
         return self._rich_cache
 
@@ -256,7 +256,7 @@ def draw(
         img_width=img_width,
         preserve_source=preserve_source,
     )
-    request = core._normalize_request(payload, source=source, overrides=overrides)
+    request = _core._normalize_request(payload, source=source, overrides=overrides)
     return DrawOutput(request)
 
 

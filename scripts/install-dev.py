@@ -1,7 +1,6 @@
 """本地开发依赖安装脚本."""
 
 import os
-import shutil
 import subprocess
 import sys
 from collections.abc import Callable
@@ -31,11 +30,6 @@ def install_windows_dev(
     cache_root = repo_root / ".cache" / "bootstrap"
     vcpkg_root = cache_root / "vcpkg"
     vcpkg_bin_cache = cache_root / "vcpkg-bincache"
-    vendor_dir = repo_root / "src" / "terminal_qrcode" / "_vendor" / "windows"
-
-    if vendor_dir.exists():
-        shutil.rmtree(vendor_dir)
-    vendor_dir.mkdir(parents=True, exist_ok=True)
     cache_root.mkdir(parents=True, exist_ok=True)
     vcpkg_bin_cache.mkdir(parents=True, exist_ok=True)
 
@@ -55,8 +49,7 @@ def install_windows_dev(
         raise RuntimeError(f"vcpkg executable not found: {vcpkg_exe}")
 
     run_command([str(vcpkg_exe), "--disable-metrics", "install", *REQUIRED_PORTS], vcpkg_root)
-
-    return []  # No DLLs bundled in static mode
+    return []
 
 
 def main() -> int:
@@ -73,7 +66,7 @@ def main() -> int:
         print(f"install failed: {exc}", file=sys.stderr)  # noqa: T201
         return 1
 
-    print("Bundled libraries (windows):")  # noqa: T201
+    print("Installed static libraries under .cache/bootstrap/vcpkg.")  # noqa: T201
     for name in outputs:
         print(f"- {name}")  # noqa: T201
     return 0

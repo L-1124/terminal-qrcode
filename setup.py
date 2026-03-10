@@ -10,6 +10,14 @@ from pathlib import Path
 from setuptools import Extension, setup
 
 
+def _set_default_build_env() -> None:
+    """为构建过程补齐默认环境变量路径."""
+    repo_root = Path(__file__).resolve().parent
+    if sys.platform == "win32":
+        default_vcpkg_root = (repo_root / ".cache" / "bootstrap" / "vcpkg").resolve()
+        os.environ.setdefault("QRT_VCPKG_ROOT", str(default_vcpkg_root))
+
+
 def _split_paths(value: str) -> list[Path]:
     """拆分环境变量中的路径列表."""
     sep = ";" if sys.platform == "win32" else ":"
@@ -51,7 +59,7 @@ def _brew_paths() -> tuple[list[Path], list[Path]]:
 
 
 def _vcpkg_paths() -> tuple[list[Path], list[Path]]:
-    """检测 Windows 本地开发 vcpkg 路径."""
+    """检测 Windows 本地 `.cache` 中的 vcpkg 路径."""
     include_dirs: list[Path] = []
     library_dirs: list[Path] = []
 
@@ -62,7 +70,7 @@ def _vcpkg_paths() -> tuple[list[Path], list[Path]]:
         default_triplet = f"{default_arch}-windows-static-md"
 
         triplet = os.environ.get("QRT_VCPKG_TRIPLET", default_triplet)
-        root = Path(os.environ.get("QRT_VCPKG_ROOT", ".cache/bootstrap/vcpkg"))
+        root = Path(os.environ["QRT_VCPKG_ROOT"])
         installed = root / "installed" / triplet
         include_dirs = [installed / "include"]
         library_dirs = [installed / "lib"]
@@ -222,6 +230,7 @@ def _get_compiler_configs() -> tuple[list[tuple[str, str | None]], list[str]]:
     return macros, compile_args
 
 
+_set_default_build_env()
 _include_dirs_path, _library_dirs_path = _resolve_directories()
 _include_dirs = [str(p) for p in _include_dirs_path]
 _library_dirs = [str(p) for p in _library_dirs_path]
@@ -234,7 +243,7 @@ setup(
     ext_modules=[
         Extension(
             "terminal_qrcode._cimage",
-            ["src/native/_cimage.c"],
+            ["src/terminal_qrcode/_cimage.c"],
             include_dirs=_include_dirs,
             library_dirs=_library_dirs,
             extra_objects=_extra_objects,

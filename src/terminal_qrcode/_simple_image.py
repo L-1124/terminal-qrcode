@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import Literal, cast
 
 from . import _cimage
-from .codecs import (
+from ._codecs import (
     PngDecodeError,
     PngEncodeError,
     TurboJpegDecodeError,
@@ -15,7 +15,7 @@ from .codecs import (
     decode_webp_rgba,
     encode_png_with_libpng,
 )
-from .contracts import PixelMode
+from ._contracts import PixelMode
 
 
 @dataclass(frozen=True)

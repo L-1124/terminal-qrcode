@@ -7,13 +7,13 @@ from unittest.mock import patch
 import pytest
 
 from terminal_qrcode import draw
-from terminal_qrcode.contracts import TerminalCapability, TerminalColorLevel
-from terminal_qrcode.probe import TerminalProbe
+from terminal_qrcode._contracts import TerminalCapability, TerminalColorLevel
+from terminal_qrcode._probe import TerminalProbe
 
 
 @pytest.fixture(autouse=True)
 def _mock_terminal_size(monkeypatch):
-    from terminal_qrcode import layout
+    from terminal_qrcode import _layout as layout
 
     monkeypatch.setattr(layout, "get_terminal_size", lambda fallback: os.terminal_size((80, 24)))
 
@@ -118,7 +118,7 @@ def test_probe_color_cached_after_first_call(mock_stdout):
 @patch("sys.stdout")
 @patch("sys.stdin")
 @patch("select.select")
-@patch("terminal_qrcode.probe.sys.platform", "linux")
+@patch("terminal_qrcode._probe.sys.platform", "linux")
 def test_probe_timeout(mock_select, mock_stdin, mock_stdout):
     """验证终端探测在超时时能够正确回退到基础能力."""
     mock_stdin.isatty.return_value = True
@@ -133,7 +133,7 @@ def test_probe_timeout(mock_select, mock_stdin, mock_stdout):
     assert mock_stdout.write.called
 
 
-@patch("terminal_qrcode.probe.TerminalProbe.probe")
+@patch("terminal_qrcode._probe.TerminalProbe.probe")
 def test_draw_short_circuit(mock_probe):
     """验证强制指定渲染器时会绕过自动探测."""
     size = 21
@@ -157,8 +157,8 @@ def test_draw_short_circuit(mock_probe):
     assert any(c in result for c in ("▄", "▀", "█", " "))
 
 
-@patch("terminal_qrcode.probe.sys.platform", "win32")
-@patch("terminal_qrcode.probe.TerminalProbe._query_terminal")
+@patch("terminal_qrcode._probe.sys.platform", "win32")
+@patch("terminal_qrcode._probe.TerminalProbe._query_terminal")
 def test_probe_win32_short_circuit(mock_query):
     """验证 Windows 平台不会调用交互式查询路径."""
     probe = TerminalProbe()
@@ -171,7 +171,7 @@ def test_probe_win32_short_circuit(mock_query):
 @patch("sys.stdout")
 @patch("sys.stdin")
 @patch("select.select")
-@patch("terminal_qrcode.probe.sys.platform", "linux")
+@patch("terminal_qrcode._probe.sys.platform", "linux")
 def test_query_terminal_ignores_dirty_prefix(mock_select, mock_stdin, mock_stdout):
     """验证终端查询会忽略前导脏字节并锚定 ESC 开头响应."""
     mock_stdin.isatty.return_value = True
@@ -187,8 +187,8 @@ def test_query_terminal_ignores_dirty_prefix(mock_select, mock_stdin, mock_stdou
     assert mock_stdout.write.called
 
 
-@patch("terminal_qrcode.probe.TerminalProbe._query_terminal")
-@patch("terminal_qrcode.probe.TerminalProbe._raw_mode")
+@patch("terminal_qrcode._probe.TerminalProbe._query_terminal")
+@patch("terminal_qrcode._probe.TerminalProbe._raw_mode")
 @patch("sys.stdin")
 def test_probe_da1_retry_recovers_from_dirty_read(mock_stdin, mock_raw_mode, mock_query_terminal):
     """验证 DA1 首次受脏数据干扰时会重试并识别 Sixel 能力."""
@@ -209,7 +209,7 @@ def test_probe_da1_retry_recovers_from_dirty_read(mock_stdin, mock_raw_mode, moc
     assert cap == TerminalCapability.SIXEL
 
 
-@patch("terminal_qrcode.probe.TerminalProbe._query_terminal")
+@patch("terminal_qrcode._probe.TerminalProbe._query_terminal")
 def test_retry_skips_when_empty_response(mock_query):
     """验证空响应不会触发二次重试."""
     mock_query.return_value = ""
@@ -218,7 +218,7 @@ def test_retry_skips_when_empty_response(mock_query):
     assert mock_query.call_count == 1
 
 
-@patch("terminal_qrcode.probe.TerminalProbe._query_terminal")
+@patch("terminal_qrcode._probe.TerminalProbe._query_terminal")
 def test_retry_only_on_dirty_prefix(mock_query):
     """验证脏数据会触发一次短重试."""
     mock_query.side_effect = ["dirty", "\x1b[?62;4c"]
@@ -228,8 +228,8 @@ def test_retry_only_on_dirty_prefix(mock_query):
     assert mock_query.call_count == 2
 
 
-@patch("terminal_qrcode.probe.TerminalProbe._query_terminal_retry")
-@patch("terminal_qrcode.probe.TerminalProbe._raw_mode")
+@patch("terminal_qrcode._probe.TerminalProbe._query_terminal_retry")
+@patch("terminal_qrcode._probe.TerminalProbe._raw_mode")
 @patch("sys.stdout")
 @patch("sys.stdin")
 def test_probe_stops_when_budget_exhausted(mock_stdin, mock_stdout, mock_raw_mode, mock_retry):
@@ -281,7 +281,7 @@ def test_probe_term_features_env_sixel_only():
     assert probe.probe(timeout=0.01) == TerminalCapability.SIXEL
 
 
-@patch("terminal_qrcode.probe.TerminalProbe._query_capabilities")
+@patch("terminal_qrcode._probe.TerminalProbe._query_capabilities")
 @patch("sys.stdin")
 def test_probe_capabilities_query_parsing(mock_stdin, mock_query):
     """验证 Capabilities 查询结果可解析为 inline image 能力."""
@@ -293,8 +293,8 @@ def test_probe_capabilities_query_parsing(mock_stdin, mock_query):
         assert probe.probe(timeout=0.2) == TerminalCapability.ITERM2
 
 
-@patch("terminal_qrcode.probe.TerminalProbe._query_terminal_retry")
-@patch("terminal_qrcode.probe.TerminalProbe._raw_mode")
+@patch("terminal_qrcode._probe.TerminalProbe._query_terminal_retry")
+@patch("terminal_qrcode._probe.TerminalProbe._raw_mode")
 @patch("sys.stdout")
 @patch("sys.stdin")
 def test_probe_single_shot_then_optional_upgrade_with_remaining_budget(
@@ -332,8 +332,8 @@ def test_probe_tmux_uses_conservative_policy(mock_stdin, mock_stdout):
     assert probe._budget_seconds() == 0.02
 
 
-@patch("terminal_qrcode.probe.TerminalProbe._query_terminal_retry")
-@patch("terminal_qrcode.probe.TerminalProbe._raw_mode")
+@patch("terminal_qrcode._probe.TerminalProbe._query_terminal_retry")
+@patch("terminal_qrcode._probe.TerminalProbe._raw_mode")
 @patch("sys.stdout")
 @patch("sys.stdin")
 def test_probe_cached_after_first_call(mock_stdin, mock_stdout, mock_raw_mode, mock_retry):
@@ -349,8 +349,8 @@ def test_probe_cached_after_first_call(mock_stdin, mock_stdout, mock_raw_mode, m
     assert mock_retry.call_count == 1
 
 
-@patch("terminal_qrcode.probe.TerminalProbe._query_terminal_retry")
-@patch("terminal_qrcode.probe.TerminalProbe._raw_mode")
+@patch("terminal_qrcode._probe.TerminalProbe._query_terminal_retry")
+@patch("terminal_qrcode._probe.TerminalProbe._raw_mode")
 @patch("sys.stdout")
 @patch("sys.stdin")
 def test_probe_cache_key_tracks_new_env_heuristics(mock_stdin, mock_stdout, mock_raw_mode, mock_retry):
@@ -369,8 +369,8 @@ def test_probe_cache_key_tracks_new_env_heuristics(mock_stdin, mock_stdout, mock
 
 
 @patch.dict("os.environ", {"TERM": "xterm-256color"}, clear=True)
-@patch("terminal_qrcode.probe.TerminalProbe.probe_color")
-@patch("terminal_qrcode.probe.TerminalProbe.probe_available_capabilities")
+@patch("terminal_qrcode._probe.TerminalProbe.probe_color")
+@patch("terminal_qrcode._probe.TerminalProbe.probe_available_capabilities")
 def test_capabilities_cached_after_first_call(mock_probe_available, mock_probe_color):
     """验证终端能力快照会整体缓存，避免重复组合探测."""
     mock_probe_available.return_value = (TerminalCapability.FALLBACK,)
@@ -389,7 +389,7 @@ def test_capabilities_cached_after_first_call(mock_probe_available, mock_probe_c
 
 
 @patch.dict("os.environ", {"TERM_PROGRAM": "WezTerm"}, clear=False)
-@patch("terminal_qrcode.probe.TerminalProbe._query_terminal_retry")
+@patch("terminal_qrcode._probe.TerminalProbe._query_terminal_retry")
 @patch("sys.stdout")
 @patch("sys.stdin")
 def test_probe_wezterm_heuristic_bypasses_interactive(mock_stdin, mock_stdout, mock_retry):
@@ -402,7 +402,7 @@ def test_probe_wezterm_heuristic_bypasses_interactive(mock_stdin, mock_stdout, m
 
 
 @patch.dict("os.environ", {"TERM_PROGRAM": "WezTerm"}, clear=False)
-@patch("terminal_qrcode.probe.TerminalProbe._query_terminal_retry")
+@patch("terminal_qrcode._probe.TerminalProbe._query_terminal_retry")
 @patch("sys.stdout")
 @patch("sys.stdin")
 def test_probe_wezterm_heuristic_requires_stdout_tty(mock_stdin, mock_stdout, mock_retry):
@@ -415,7 +415,7 @@ def test_probe_wezterm_heuristic_requires_stdout_tty(mock_stdin, mock_stdout, mo
 
 
 @patch.dict("os.environ", {"TERM_PROGRAM": "WezTerm", "TMUX": "1"}, clear=False)
-@patch("terminal_qrcode.probe.TerminalProbe._query_terminal_retry")
+@patch("terminal_qrcode._probe.TerminalProbe._query_terminal_retry")
 @patch("sys.stdout")
 @patch("sys.stdin")
 def test_probe_wezterm_heuristic_disabled_in_tmux(mock_stdin, mock_stdout, mock_retry):
@@ -428,9 +428,9 @@ def test_probe_wezterm_heuristic_disabled_in_tmux(mock_stdin, mock_stdout, mock_
     assert mock_retry.call_count >= 1
 
 
-@patch("terminal_qrcode.probe.sys.platform", "linux")
-@patch("terminal_qrcode.probe.tty")
-@patch("terminal_qrcode.probe.termios")
+@patch("terminal_qrcode._probe.sys.platform", "linux")
+@patch("terminal_qrcode._probe.tty")
+@patch("terminal_qrcode._probe.termios")
 @patch("sys.stdin")
 def test_raw_mode_noop_when_tcgetattr_fails(mock_stdin, mock_termios, mock_tty):
     """验证 tcgetattr 抛错时 _raw_mode 会降级为 no-op."""
@@ -447,9 +447,9 @@ def test_raw_mode_noop_when_tcgetattr_fails(mock_stdin, mock_termios, mock_tty):
     mock_termios.tcsetattr.assert_not_called()
 
 
-@patch("terminal_qrcode.probe.sys.platform", "linux")
-@patch("terminal_qrcode.probe.tty")
-@patch("terminal_qrcode.probe.termios")
+@patch("terminal_qrcode._probe.sys.platform", "linux")
+@patch("terminal_qrcode._probe.tty")
+@patch("terminal_qrcode._probe.termios")
 @patch("sys.stdin")
 def test_raw_mode_noop_when_fileno_raises_type_error(mock_stdin, mock_termios, mock_tty):
     """验证 fileno 抛 TypeError 时 _raw_mode 会降级为 no-op."""

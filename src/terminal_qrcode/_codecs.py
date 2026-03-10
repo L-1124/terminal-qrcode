@@ -1,7 +1,7 @@
 """图像编解码后端整合模块（纯 C 扩展实现）."""
 
 from . import _cimage
-from .contracts import PixelMode
+from ._contracts import PixelMode
 
 __all__ = [
     "PngDecodeError",

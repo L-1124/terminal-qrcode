@@ -4,7 +4,7 @@ import dataclasses
 from collections.abc import Generator
 from typing import Any, cast
 
-from .contracts import (
+from ._contracts import (
     ColorLevelName,
     ImageInput,
     ImageProtocol,
@@ -22,13 +22,13 @@ from .contracts import (
     TerminalCapability,
     TerminalColorLevel,
 )
-from .layout import _pad_border
-from .qr_restore import strict_restore_qr_matrix
-from .renderers import (
+from ._layout import _pad_border
+from ._qr_restore import strict_restore_qr_matrix
+from ._renderers import (
     RendererRegistry,
     build_default_renderer_registry,
 )
-from .simple_image import SimpleImage
+from ._simple_image import SimpleImage
 
 DEFAULT_RENDERER_REGISTRY: RendererRegistry[Renderer] = build_default_renderer_registry()
 _MODE_CHANNELS: dict[PixelMode, int] = {"L": 1, "RGB": 3, "RGBA": 4}
@@ -74,7 +74,7 @@ def _resolve_capability(config: RenderConfig) -> TerminalCapability:
             return TerminalCapability.ITERM2
         return TerminalCapability.FALLBACK
 
-    from .probe import TerminalProbe
+    from ._probe import TerminalProbe
 
     probe = TerminalProbe()
     return probe.probe(timeout=config.probe.timeout)
@@ -90,7 +90,7 @@ def _resolve_terminal_capabilities(config: RenderConfig) -> TerminalCapabilities
             available_capabilities=(capability,),
         )
 
-    from .probe import TerminalProbe
+    from ._probe import TerminalProbe
 
     probe = TerminalProbe()
     if config.probe.renderer != "auto":

@@ -6,9 +6,9 @@ from unittest.mock import patch
 
 import pytest
 
-import terminal_qrcode.simple_image as simple_image
+import terminal_qrcode._simple_image as simple_image
 from terminal_qrcode import _cimage
-from terminal_qrcode.simple_image import SimpleImage
+from terminal_qrcode._simple_image import SimpleImage
 
 
 def _png_fixture_bytes() -> bytes:

@@ -6,7 +6,7 @@ from enum import Enum, auto
 from typing import TYPE_CHECKING, Any, Literal, Protocol, TypeAlias, runtime_checkable
 
 if TYPE_CHECKING:
-    from .simple_image import SimpleImage
+    from ._simple_image import SimpleImage
 
 RendererOption = Literal["auto", "kitty", "iterm2", "wezterm", "sixel", "halfblock"]
 HalfBlockMode = Literal["precision", "area"]
