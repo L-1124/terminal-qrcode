@@ -898,13 +898,11 @@ threshold_to_bits_raw(
     } else {
         for (i = 0; i < pixels; i++) {
             const uint8_t *sp = src + i * 4;
-            int gray;
-            if (sp[3] <= 127) {
-                dst[i] = 0;
-                continue;
-            }
-            gray = (299 * sp[0] + 587 * sp[1] + 114 * sp[2]) / 1000;
-            dst[i] = gray < threshold ? 1 : 0;
+            /* Branchless alpha check: if sp[3] <= 127, mask is 0, else mask is -1 (all 1s) */
+            int32_t is_transparent = ((int32_t)sp[3] - 128) >> 31;
+            int gray = (299 * sp[0] + 587 * sp[1] + 114 * sp[2]) / 1000;
+            int bit = (gray < threshold);
+            dst[i] = (uint8_t)(bit & ~is_transparent);
         }
     }
     Py_END_ALLOW_THREADS
@@ -989,91 +987,78 @@ static const char *const SIXEL_RLE_LOOKUP[256] = {
     "!250", "!251", "!252", "!253", "!254", "!255"
 };
 
-static char *
-apply_sixel_rle(const char *buf, int len)
+typedef struct {
+    char *buf;
+    size_t size;
+    size_t cap;
+} SixelStream;
+
+static int
+ss_append(SixelStream *ss, const char *data, size_t len)
 {
-    char *out = (char *)PyMem_Malloc((size_t)(len * 2 + 1));
-    int out_idx = 0;
-    int i = 0;
-
-    if (out == NULL) {
-        return NULL;
+    if (ss->size + len >= ss->cap) {
+        size_t new_cap = ss->cap == 0 ? 16384 : ss->cap * 2;
+        while (new_cap < ss->size + len + 1) {
+            new_cap *= 2;
+        }
+        char *new_buf = (char *)PyMem_Realloc(ss->buf, new_cap);
+        if (new_buf == NULL) {
+            return -1;
+        }
+        ss->buf = new_buf;
+        ss->cap = new_cap;
     }
+    memcpy(ss->buf + ss->size, data, len);
+    ss->size += len;
+    ss->buf[ss->size] = '\0';
+    return 0;
+}
 
+static int
+ss_append_rle(SixelStream *ss, const char *buf, int len)
+{
+    int i = 0;
     while (i < len) {
         char ch = buf[i];
         int count = 1;
-        /* 计算连续相同字符数量 */
         while (i + count < len && buf[i + count] == ch && count < 255) {
             count++;
         }
-
         if (count >= 4) {
-            /* 4 个或以上相同字符使用 RLE: !n<char> */
             const char *prefix = SIXEL_RLE_LOOKUP[count];
-            while (*prefix) {
-                out[out_idx++] = *prefix++;
-            }
-            out[out_idx++] = ch;
+            size_t plen = strlen(prefix);
+            if (ss_append(ss, prefix, plen) < 0) return -1;
+            if (ss_append(ss, &ch, 1) < 0) return -1;
         } else {
-            /* 少于 4 个直接输出 */
             for (int j = 0; j < count; j++) {
-                out[out_idx++] = ch;
+                if (ss_append(ss, &ch, 1) < 0) return -1;
             }
         }
         i += count;
     }
-    out[out_idx] = '\0';
-    return out;
+    return 0;
 }
 
 static PyObject *
 sixel_encode_from_bits_raw(const uint8_t *bits, int width, int height)
 {
     int y;
-    PyObject *parts;
-    PyObject *sep;
+    SixelStream ss = {NULL, 0, 0};
     PyObject *result;
+    char *white_buf = NULL;
+    char *black_buf = NULL;
 
-    parts = PyList_New(0);
-    if (parts == NULL) {
-        return NULL;
+    white_buf = (char *)PyMem_Malloc((size_t)width);
+    black_buf = (char *)PyMem_Malloc((size_t)width);
+    if (white_buf == NULL || black_buf == NULL) {
+        if (white_buf) PyMem_Free(white_buf);
+        if (black_buf) PyMem_Free(black_buf);
+        return PyErr_NoMemory();
     }
 
     for (y = 0; y < height; y += 6) {
         int max_i = (height - y) < 6 ? (height - y) : 6;
-        PyObject *white_prefix = PyUnicode_FromString("#0");
-        PyObject *white_line = NULL;
-        PyObject *rle_white_line = NULL;
-        PyObject *dollar = PyUnicode_FromString("$");
-        PyObject *black_prefix = PyUnicode_FromString("#1");
-        PyObject *black_line = NULL;
-        PyObject *rle_black_line = NULL;
-        PyObject *dash = PyUnicode_FromString("-");
-        char *white_buf = (char *)PyMem_Malloc((size_t)width + 1U);
-        char *black_buf = (char *)PyMem_Malloc((size_t)width + 1U);
-        char *white_rle = NULL;
-        char *black_rle = NULL;
         int x;
-
-        if (
-            white_prefix == NULL || dollar == NULL || black_prefix == NULL || dash == NULL
-            || white_buf == NULL || black_buf == NULL
-        ) {
-            Py_XDECREF(white_prefix);
-            Py_XDECREF(dollar);
-            Py_XDECREF(black_prefix);
-            Py_XDECREF(dash);
-            if (white_buf != NULL) {
-                PyMem_Free(white_buf);
-            }
-            if (black_buf != NULL) {
-                PyMem_Free(black_buf);
-            }
-            Py_DECREF(parts);
-            PyErr_NoMemory();
-            return NULL;
-        }
 
         Py_BEGIN_ALLOW_THREADS
         for (x = 0; x < width; x++) {
@@ -1093,73 +1078,29 @@ sixel_encode_from_bits_raw(const uint8_t *bits, int width, int height)
         }
         Py_END_ALLOW_THREADS
 
-        /* 对白/黑轨应用 RLE */
-        white_rle = apply_sixel_rle(white_buf, width);
-        black_rle = apply_sixel_rle(black_buf, width);
+        /* 写入白轨: #0 + RLE(white_buf) + $ */
+        if (ss_append(&ss, "#0", 2) < 0) goto oom;
+        if (ss_append_rle(&ss, white_buf, width) < 0) goto oom;
+        if (ss_append(&ss, "$", 1) < 0) goto oom;
 
-        if (white_rle == NULL || black_rle == NULL) {
-            PyMem_Free(white_buf);
-            PyMem_Free(black_buf);
-            Py_DECREF(white_prefix);
-            Py_DECREF(dollar);
-            Py_DECREF(black_prefix);
-            Py_DECREF(dash);
-            Py_DECREF(parts);
-            PyErr_NoMemory();
-            return NULL;
-        }
-
-        white_line = PyUnicode_FromString(white_rle);
-        black_line = PyUnicode_FromString(black_rle);
-        PyMem_Free(white_rle);
-        PyMem_Free(black_rle);
-
-        if (white_line == NULL || black_line == NULL) {
-            Py_XDECREF(white_line);
-            Py_XDECREF(black_line);
-            Py_DECREF(white_prefix);
-            Py_DECREF(dollar);
-            Py_DECREF(black_prefix);
-            Py_DECREF(dash);
-            Py_DECREF(parts);
-            PyErr_NoMemory();
-            return NULL;
-        }
-
-        PyMem_Free(white_buf);
-        PyMem_Free(black_buf);
-
-        /* 总是输出两条轨：白轨、$分隔符、黑轨、-结束符 */
-        if (PyList_Append(parts, white_prefix) < 0 || PyList_Append(parts, white_line) < 0
-            || PyList_Append(parts, dollar) < 0 || PyList_Append(parts, black_prefix) < 0
-            || PyList_Append(parts, black_line) < 0 || PyList_Append(parts, dash) < 0) {
-            Py_DECREF(white_prefix);
-            Py_DECREF(white_line);
-            Py_DECREF(dollar);
-            Py_DECREF(black_prefix);
-            Py_DECREF(black_line);
-            Py_DECREF(dash);
-            Py_DECREF(parts);
-            return NULL;
-        }
-
-        Py_XDECREF(white_prefix);
-        Py_XDECREF(white_line);
-        Py_DECREF(dollar);
-        Py_XDECREF(black_prefix);
-        Py_XDECREF(black_line);
-        Py_DECREF(dash);
+        /* 写入黑轨: #1 + RLE(black_buf) + - */
+        if (ss_append(&ss, "#1", 2) < 0) goto oom;
+        if (ss_append_rle(&ss, black_buf, width) < 0) goto oom;
+        if (ss_append(&ss, "-", 1) < 0) goto oom;
     }
 
-    sep = PyUnicode_FromString("");
-    if (sep == NULL) {
-        Py_DECREF(parts);
-        return NULL;
-    }
-    result = PyUnicode_Join(sep, parts);
-    Py_DECREF(sep);
-    Py_DECREF(parts);
+    PyMem_Free(white_buf);
+    PyMem_Free(black_buf);
+
+    result = PyUnicode_FromStringAndSize(ss.buf, (Py_ssize_t)ss.size);
+    if (ss.buf) PyMem_Free(ss.buf);
     return result;
+
+oom:
+    if (white_buf) PyMem_Free(white_buf);
+    if (black_buf) PyMem_Free(black_buf);
+    if (ss.buf) PyMem_Free(ss.buf);
+    return PyErr_NoMemory();
 }
 
 static PyObject *
@@ -1264,15 +1205,49 @@ cimage_matrix_to_image(PyObject *self, PyObject *args)
     if (channels == 4) black_pixel[3] = 255;
 
     Py_BEGIN_ALLOW_THREADS
-    for (my = 0; my < src_h; my++) {
-        for (mx = 0; mx < src_w; mx++) {
-            uint8_t val = src[my * src_w + mx];
-            const uint8_t *pixel = val ? black_pixel : white_pixel;
-            for (dy = 0; dy < scale; dy++) {
-                int row_base = (my * scale + dy) * dst_w * channels;
-                for (dx = 0; dx < scale; dx++) {
-                    int col_base = (mx * scale + dx) * channels;
-                    memcpy(dst + row_base + col_base, pixel, (size_t)channels);
+    if (channels == 4) {
+        uint32_t wp, bp;
+        memcpy(&wp, white_pixel, 4);
+        memcpy(&bp, black_pixel, 4);
+
+        for (my = 0; my < src_h; my++) {
+            for (mx = 0; mx < src_w; mx++) {
+                uint8_t val = src[(Py_ssize_t)my * src_w + mx];
+                uint32_t p = val ? bp : wp;
+                for (dy = 0; dy < scale; dy++) {
+                    uint32_t *dst_row = (uint32_t *)(dst + (Py_ssize_t)(my * scale + dy) * dst_w * 4);
+                    for (dx = 0; dx < scale; dx++) {
+                        dst_row[mx * scale + dx] = p;
+                    }
+                }
+            }
+        }
+    } else if (channels == 3) {
+        for (my = 0; my < src_h; my++) {
+            for (mx = 0; mx < src_w; mx++) {
+                uint8_t val = src[(Py_ssize_t)my * src_w + mx];
+                const uint8_t *p = val ? black_pixel : white_pixel;
+                uint8_t r = p[0], g = p[1], b = p[2];
+                for (dy = 0; dy < scale; dy++) {
+                    uint8_t *dst_ptr = dst + ((Py_ssize_t)(my * scale + dy) * dst_w + (Py_ssize_t)mx * scale) * 3;
+                    for (dx = 0; dx < scale; dx++) {
+                        dst_ptr[0] = r; dst_ptr[1] = g; dst_ptr[2] = b;
+                        dst_ptr += 3;
+                    }
+                }
+            }
+        }
+    } else {
+        for (my = 0; my < src_h; my++) {
+            for (mx = 0; mx < src_w; mx++) {
+                uint8_t val = src[(Py_ssize_t)my * src_w + mx];
+                const uint8_t *pixel = val ? black_pixel : white_pixel;
+                for (dy = 0; dy < scale; dy++) {
+                    Py_ssize_t row_base = (Py_ssize_t)(my * scale + dy) * dst_w * channels;
+                    for (dx = 0; dx < scale; dx++) {
+                        Py_ssize_t col_base = (Py_ssize_t)(mx * scale + dx) * channels;
+                        memcpy(dst + row_base + col_base, pixel, (size_t)channels);
+                    }
                 }
             }
         }
