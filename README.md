@@ -16,23 +16,25 @@ uv add terminal-qrcode
 ## ✨ API
 
 ```python
-from terminal_qrcode import draw
+from terminal_qrcode import draw, generate
 
+# 1. 渲染已有图片
 out = draw("test.png", renderer="halfblock")
 out.print()
 
-graphic = draw("test.png")
-graphic.print()
+# 2. 直接根据文本生成二维码
+qr = generate("https://github.com", renderer="auto")
+qr.print()
 ```
 
-配合 Rich 使用时，`console.print(draw(...))` 会强制走 `halfblock` 文本渲染
+配合 Rich 使用时，`console.print(draw(...))` 或 `console.print(generate(...))` 会强制走 `halfblock` 文本渲染
 
 ```python
 from rich.console import Console
-from terminal_qrcode import draw
+from terminal_qrcode import generate
 
 console = Console()
-console.print(draw("test.png"))
+console.print(generate("https://github.com"))
 ```
 
 ## 🖼️ 支持图片格式

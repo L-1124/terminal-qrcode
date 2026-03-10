@@ -8,6 +8,7 @@ authors = [
 ]
 dependencies = [
   "colorama>=0.4.6",
+  "qrcode>=8.2",
 ]
 dynamic = ["version"]
 

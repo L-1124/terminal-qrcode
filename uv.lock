@@ -389,6 +389,7 @@ name = "terminal-qrcode"
 source = { editable = "." }
 dependencies = [
     { name = "colorama" },
+    { name = "qrcode" },
 ]
 
 [package.dev-dependencies]
@@ -416,7 +417,10 @@ test = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "colorama", specifier = ">=0.4.6" }]
+requires-dist = [
+    { name = "colorama", specifier = ">=0.4.6" },
+    { name = "qrcode", specifier = ">=8.2" },
+]
 
 [package.metadata.requires-dev]
 dev = [

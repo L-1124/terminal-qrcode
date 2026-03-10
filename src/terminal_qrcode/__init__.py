@@ -3,7 +3,7 @@
 import sys
 from collections.abc import Iterator
 from pathlib import Path
-from typing import TextIO, overload
+from typing import Literal, TextIO, overload
 
 from . import core
 from .contracts import (
@@ -20,7 +20,11 @@ __all__ = [
     "SimpleImage",
     "DrawOutput",
     "draw",
+    "generate",
 ]
+
+
+ErrorCorrectionLevel = Literal["low", "medium", "quartile", "high"]
 
 
 def _build_overrides(
@@ -254,3 +258,66 @@ def draw(
     )
     request = core._normalize_request(payload, source=source, overrides=overrides)
     return DrawOutput(request)
+
+
+def generate(
+    data: str,
+    *,
+    error_correction: ErrorCorrectionLevel = "medium",
+    version: int | None = None,
+    renderer: RendererOption = "auto",
+    invert: bool | None = None,
+    fit: bool | None = None,
+    max_cols: int | None = None,
+    img_width: int | None = None,
+    preserve_source: bool | None = None,
+) -> DrawOutput:
+    """
+    根据文本数据直接生成二维码并渲染输出.
+
+    Args:
+        data: 二维码文本内容或 URL.
+        error_correction: 纠错等级 (low/medium/quartile/high).
+        version: 二维码版本 (1-40)，None 表示自动选择.
+        renderer: 渲染器类型.
+        invert: 是否反转颜色.
+        fit: 是否按终端列宽自动收束.
+        max_cols: 最大列宽上限.
+        img_width: 渲染宽度.
+        preserve_source: 是否在图形协议终端下尝试保留并直接渲染原始图像.
+
+    Returns:
+        渲染输出包装对象.
+
+    Examples:
+        >>> from terminal_qrcode import generate
+        >>> generate("https://github.com").print()
+
+    """
+    import qrcode
+    from qrcode import constants as qrc
+
+    ec_map = {
+        "low": qrc.ERROR_CORRECT_L,
+        "medium": qrc.ERROR_CORRECT_M,
+        "quartile": qrc.ERROR_CORRECT_Q,
+        "high": qrc.ERROR_CORRECT_H,
+    }
+
+    qr = qrcode.QRCode(
+        version=version,
+        error_correction=ec_map.get(error_correction, qrc.ERROR_CORRECT_M),
+        border=0,  # 由 draw/layout 统一处理边距
+    )
+    qr.add_data(data)
+    matrix = qr.get_matrix()
+
+    return draw(
+        matrix,
+        renderer=renderer,
+        invert=invert,
+        fit=fit,
+        max_cols=max_cols,
+        img_width=img_width,
+        preserve_source=preserve_source,
+    )
