@@ -27,6 +27,8 @@ repos:
         name: ruff
         entry: uv run ruff check
         language: system
+        stages:
+          - commit
         files: \.(py|pyi)$
         args: [--fix]
 
@@ -34,6 +36,8 @@ repos:
         name: ruff-format
         entry: uv run ruff format
         language: system
+        stages:
+          - commit
         files: \.(py|pyi)$
 
       - id: pyrefly
@@ -41,11 +45,15 @@ repos:
         entry: uv run pyrefly check
         language: system
         pass_filenames: true
+        stages:
+          - commit
         files: \.(py|pyi)$
 
       - id: testing
         name: testing
         language: system
         entry: uv run pytest
+        stages:
+          - commit
         pass_filenames: false
         files: \.(py|pyi)$

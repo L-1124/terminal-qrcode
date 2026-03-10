@@ -179,6 +179,20 @@ def test_halfblock_color_level_ansi16_contains_sgr_sequences():
     assert "▀" in output
 
 
+def test_halfblock_color_lines_are_self_contained():
+    """验证彩色 halfblock 每一行都会独立重置并重新声明颜色状态."""
+    matrix = [
+        [True, False],
+        [False, True],
+        [True, False],
+        [False, True],
+    ]
+    config = _render_config(fit=False, img_width=10, color_level="ansi16")
+    output = "".join(HalfBlockRenderer().render(MatrixSource(matrix), config))
+    assert "\x1b[0m\n\x1b[" in output
+    assert output.endswith("\x1b[0m")
+
+
 def test_halfblock_invert_behavior():
     """验证半块渲染 invert 行为."""
     matrix = [[True, True], [True, True]]

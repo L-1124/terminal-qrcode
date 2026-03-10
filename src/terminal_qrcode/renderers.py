@@ -252,42 +252,34 @@ class HalfBlockRenderer:
                 if invert_for_render:
                     top, bottom = not top, not bottom
 
-                # 有颜色时统一用 "▀"，无颜色时根据上下选择字符
                 if color_enabled:
-                    # 对 halfblock "▀" 字符：前景色=上半块，背景色=下半块
                     fg_dark = bool(top)
                     bg_dark = bool(bottom)
                     char = "▀"
                 else:
-                    # 无颜色时根据 top/bottom 组合选择字符
                     char_idx = (int(top) << 1) | int(bottom)
                     char = _HALFBLOCK_CHARS[char_idx]
                     fg_dark = False
                     bg_dark = False
 
-                # 检查是否需要发送新的 SGR（颜色改变或运行结束）
                 if color_enabled and (fg_dark != last_fg_dark or bg_dark != last_bg_dark):
-                    # 输出前一个 run 的字符（如果有的话）
-                    if run_chars and last_fg_dark is not None and last_bg_dark is not None:
-                        sgr = _halfblock_sgr(color_level, last_fg_dark, last_bg_dark)
-                        line_parts.append(sgr)
+                    if run_chars:
+                        if last_fg_dark is not None and last_bg_dark is not None:
+                            sgr = _halfblock_sgr(color_level, last_fg_dark, last_bg_dark)
+                            line_parts.append(sgr)
                         line_parts.append("".join(run_chars))
                         run_chars.clear()
-                    # 记录新的颜色
                     last_fg_dark = fg_dark
                     last_bg_dark = bg_dark
 
                 run_chars.append(char)
 
-            # 输出最后一个 run
             if run_chars:
-                # 仅当颜色启用且之前有 run 时才发送 SGR
                 if color_enabled and last_fg_dark is not None and last_bg_dark is not None:
                     sgr = _halfblock_sgr(color_level, last_fg_dark, last_bg_dark)
                     line_parts.append(sgr)
                 line_parts.append("".join(run_chars))
 
-            # 添加重置序列
             if color_enabled:
                 line_parts.append(_SGR_RESET)
 
@@ -318,31 +310,33 @@ class KittyRenderer:
         else:
             raise TypeError(f"Unsupported source type: {type(source)}")
 
-        # 使用 PNG 压缩传输 (f=100) 以显著减少带宽占用
+        # 优化：流式切片编码，降低内存峰值
         png_data = image.to_png_bytes()
-        b64_data = base64.b64encode(png_data).decode("ascii")
 
-        chunk_size = 4096
-        payloads: list[str] = []
+        # 按 3 字节的倍数切分（如 3000 字节），确保生成的每段 Base64 块都没有中途 Padding
+        # Kitty 协议允许每块带 Padding，但流式切分更稳健且节省内存
+        chunk_size_raw = 3000
         should_wrap = _should_tmux_wrap(config)
+        first_chunk = True
 
-        for i in range(0, len(b64_data), chunk_size):
-            chunk = b64_data[i : i + chunk_size]
-            is_last = (i + chunk_size) >= len(b64_data)
+        for i in range(0, len(png_data), chunk_size_raw):
+            raw_chunk = png_data[i : i + chunk_size_raw]
+            b64_chunk = base64.b64encode(raw_chunk).decode("ascii")
+
+            is_last = (i + chunk_size_raw) >= len(png_data)
             m = 0 if is_last else 1
 
-            if i == 0:
-                # f=100 表示 PNG 格式，此时无需显式指定 s (width) 和 v (height)
-                sequence = f"\x1b_Ga=T,f=100,c={display_cols},r={display_rows},m={m};{chunk}\x1b\\"
+            if first_chunk:
+                # f=100 表示 PNG 格式
+                sequence = f"\x1b_Ga=T,f=100,c={display_cols},r={display_rows},m={m};{b64_chunk}\x1b\\"
+                first_chunk = False
             else:
-                sequence = f"\x1b_Gm={m};{chunk}\x1b\\"
+                sequence = f"\x1b_Gm={m};{b64_chunk}\x1b\\"
 
             if should_wrap:
                 sequence = _tmux_wrap(sequence)
 
-            payloads.append(sequence)
-
-        yield "".join(payloads)
+            yield sequence
 
 
 class ITerm2Renderer:
