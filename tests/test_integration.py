@@ -1,4 +1,4 @@
-"""Pillow 与 qrcode 集成测试."""
+"""Pillow, qrcode 与 CLI 集成测试."""
 
 from io import BytesIO
 
@@ -8,7 +8,7 @@ from terminal_qrcode import draw
 
 
 def test_draw_accepts_pillow_image_object():
-    """验证 draw 支持真实 Pillow 图像对象输入."""
+    """验证 draw 支持真实 Pillow 图像对象 input."""
     pil_image_mod = pytest.importorskip("PIL.Image")
     qrcode_mod = pytest.importorskip("qrcode")
 

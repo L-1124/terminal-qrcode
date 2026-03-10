@@ -1,23 +1,39 @@
-"""渲染核心功能的测试模块."""
+"""渲染相关测试 (canonical, core, selection & images)."""
 
 import os
 from collections.abc import Generator
+from pathlib import Path
 from typing import Literal
 from unittest.mock import patch
 
 import pytest
 
-from terminal_qrcode import layout
+from terminal_qrcode import draw, layout
 from terminal_qrcode.contracts import (
     ColorLevelName,
+    ImageSource,
     LayoutConfig,
     MatrixSource,
     ProbeConfig,
     QRConfig,
     RendererId,
+    TerminalCapability,
 )
-from terminal_qrcode.core import DEFAULT_RENDERER_REGISTRY, RenderConfig
-from terminal_qrcode.renderers import HalfBlockRenderer, ITerm2Renderer, KittyRenderer, SixelRenderer, WezTermRenderer
+from terminal_qrcode.core import (
+    DEFAULT_RENDERER_REGISTRY,
+    RenderConfig,
+    RenderRequest,
+    _resolve_qr_source,
+)
+from terminal_qrcode.renderers import (
+    HalfBlockRenderer,
+    ITerm2Renderer,
+    KittyRenderer,
+    SixelRenderer,
+    WezTermRenderer,
+    build_default_renderer_registry,
+)
+from terminal_qrcode.simple_image import SimpleImage
 
 
 @pytest.fixture(autouse=True)
@@ -64,6 +80,66 @@ def _render_config(
         layout=LayoutConfig(fit=fit, img_width=img_width),
         probe=ProbeConfig(color_level=color_level, tmux_passthrough=tmux_passthrough),
     )
+
+
+# --- Tests from test_canonical_render.py ---
+
+
+def test_resolve_payload_canonical_default():
+    """验证默认情况下图像输入被转换为矩阵（规范化渲染）."""
+    qr_path = Path(__file__).parent / "qrcode" / "qr_url_basic.png"
+    img = SimpleImage.open(str(qr_path))
+
+    config = RenderConfig()
+    request = RenderRequest(payload=img, config=config, source="test")
+
+    # 模拟 Kitty 终端
+    source = _resolve_qr_source(request, TerminalCapability.KITTY)
+
+    # 默认应返回 MatrixSource
+    assert isinstance(source, MatrixSource)
+    matrix = source.matrix
+    assert isinstance(matrix, list)
+    assert isinstance(matrix[0], list)
+    assert isinstance(matrix[0][0], bool)
+    # qr_url_basic.png 实际上是 version 4 (33x33)，加 4*2 border 后应为 41x41
+    assert len(matrix) == 41
+
+
+def test_resolve_payload_preserve_source():
+    """验证开启 preserve_source 时图形终端保留原始图像."""
+    qr_path = Path(__file__).parent / "qrcode" / "qr_url_basic.png"
+    img = SimpleImage.open(str(qr_path))
+
+    # 显式开启 preserve_source
+    config = RenderConfig(qr=QRConfig(preserve_source=True))
+    request = RenderRequest(payload=img, config=config, source="test")
+
+    # 模拟 Kitty 终端
+    source = _resolve_qr_source(request, TerminalCapability.KITTY)
+
+    # 应返回 ImageSource 对象
+    assert isinstance(source, ImageSource)
+    assert source.image.width == img.width
+    assert source.is_original is True
+
+
+def test_resolve_payload_preserve_source_fallback_still_canonical():
+    """验证即开启 preserve_source，在降级终端下仍返回矩阵以确保显示."""
+    qr_path = Path(__file__).parent / "qrcode" / "qr_url_basic.png"
+    img = SimpleImage.open(str(qr_path))
+
+    config = RenderConfig(qr=QRConfig(preserve_source=True))
+    request = RenderRequest(payload=img, config=config, source="test")
+
+    # 模拟 FALLBACK 终端（不支持图形协议）
+    source = _resolve_qr_source(request, TerminalCapability.FALLBACK)
+
+    # 仍应返回 MatrixSource，因为 SimpleImage 无法直接由 HalfBlockRenderer 渲染
+    assert isinstance(source, MatrixSource)
+
+
+# --- Tests from test_renderers_core.py ---
 
 
 def test_halfblock_fit_false_rejects_lossy_downscale():
@@ -185,3 +261,95 @@ def test_sixel_renderer_tmux_always_forces_wrap(_mock_allow):
     matrix = _build_qr_like_matrix(size=21)
     output = "".join(SixelRenderer().render(MatrixSource(matrix), _render_config(tmux_passthrough="always")))
     assert output.startswith("\x1bPtmux;")
+
+
+# --- Tests from test_renderer_selection.py ---
+
+
+def test_renderer_priority_standard():
+    """验证标准环境下 Kitty 优先."""
+    registry = build_default_renderer_registry()
+    caps = [TerminalCapability.KITTY, TerminalCapability.SIXEL, TerminalCapability.FALLBACK]
+
+    with patch.dict(os.environ, {}, clear=True):
+        renderer = registry.select_renderer(caps)
+        assert isinstance(renderer, KittyRenderer)
+
+
+def test_renderer_priority_ssh():
+    """验证 SSH 环境下 Sixel 优先 (因为带宽效率更高)."""
+    registry = build_default_renderer_registry()
+    caps = [TerminalCapability.KITTY, TerminalCapability.SIXEL, TerminalCapability.FALLBACK]
+
+    # 模拟 SSH 连接
+    with patch.dict(os.environ, {"SSH_CONNECTION": "192.168.1.1 12345 192.168.1.2 22"}):
+        renderer = registry.select_renderer(caps)
+        assert isinstance(renderer, SixelRenderer)
+
+
+def test_renderer_priority_fallback():
+    """验证降级逻辑."""
+    registry = build_default_renderer_registry()
+    caps = [TerminalCapability.FALLBACK]
+
+    renderer = registry.select_renderer(caps)
+    from terminal_qrcode.renderers import HalfBlockRenderer
+
+    assert isinstance(renderer, HalfBlockRenderer)
+
+
+# --- Tests from test_qrcode_images.py ---
+
+_QRCODE_IMAGE_DIR = Path(__file__).parent / "qrcode"
+_SAMPLE_IDS = ("qr_url_basic", "qr_text_unicode", "qr_wifi_wpa", "qr_text_multiline")
+
+
+def _expected_files(sample_id: str) -> list[Path]:
+    return [
+        _QRCODE_IMAGE_DIR / f"{sample_id}.png",
+        _QRCODE_IMAGE_DIR / f"{sample_id}.webp",
+        _QRCODE_IMAGE_DIR / f"{sample_id}.jpeg",
+    ]
+
+
+@pytest.mark.parametrize("sample_id", _SAMPLE_IDS)
+def test_qrcode_image_files_exist(sample_id):
+    """验证固定二维码样本对应的三种格式文件都存在."""
+    for image_path in _expected_files(sample_id):
+        assert image_path.is_file(), f"missing fixture: {image_path}"
+
+
+@pytest.mark.parametrize("sample_id", _SAMPLE_IDS)
+def test_qrcode_images_are_decodable(sample_id):
+    """验证固定二维码样本可被 SimpleImage.open 成功解码."""
+    for image_path in _expected_files(sample_id):
+        image = SimpleImage.open(image_path)
+        assert image.width > 0
+        assert image.height > 0
+        assert image.mode in {"L", "RGB", "RGBA"}
+
+
+def test_draw_accepts_qrcode_pillow_image():
+    """验证 draw 支持 qrcode 结合 Pillow 生成的图像对象."""
+    qrcode_mod = pytest.importorskip("qrcode")
+
+    qr = qrcode_mod.QRCode(border=4, box_size=4)
+    qr.add_data("https://example.com")
+    qr.make(fit=True)
+    image = qr.make_image(fill_color="black", back_color="white").get_image()
+
+    output = "".join(draw(image, renderer="halfblock", fit=False, img_width=80))
+    assert any(c in output for c in ("▄", "▀", "█", " "))
+
+
+def test_draw_accepts_qrcode_base_image_wrapper():
+    """验证 draw 支持 qrcode BaseImage 包装对象."""
+    qrcode_mod = pytest.importorskip("qrcode")
+
+    qr = qrcode_mod.QRCode(border=4, box_size=4)
+    qr.add_data("terminal-qrcode")
+    qr.make(fit=True)
+    wrapped_image = qr.make_image(fill_color="black", back_color="white")
+
+    output = "".join(draw(wrapped_image, renderer="halfblock", fit=False, img_width=80))
+    assert any(c in output for c in ("▄", "▀", "█", " "))
