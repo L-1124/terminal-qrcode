@@ -342,6 +342,10 @@ class KittyRenderer:
 class ITerm2Renderer:
     """iTerm2 终端图形协议渲染器."""
 
+    def _extra_params(self) -> str:
+        """子类可覆盖以追加额外 OSC 参数."""
+        return ""
+
     def render(self, source: QRSource, config: RenderConfig) -> Generator[str, None, None]:
         """根据 iTerm2 内联图像协议渲染源."""
         if isinstance(source, ImageSource):
@@ -357,7 +361,8 @@ class ITerm2Renderer:
 
         png_data = image.to_png_bytes()
         b64_data = base64.b64encode(png_data).decode("ascii")
-        payload_seq = f"\x1b]1337;File=inline=1;width={display_cols};height=auto:{b64_data}\x07"
+        extra = self._extra_params()
+        payload_seq = f"\x1b]1337;File=inline=1;width={display_cols};height=auto{extra}:{b64_data}\x07"
 
         if _should_tmux_wrap(config):
             yield _tmux_wrap(payload_seq)
@@ -369,28 +374,9 @@ class ITerm2Renderer:
 class WezTermRenderer(ITerm2Renderer):
     """WezTerm 终端图形协议渲染器 (基于 iTerm2 协议增强)."""
 
-    def render(self, source: QRSource, config: RenderConfig) -> Generator[str, None, None]:
-        """根据 WezTerm 增强型的 iTerm2 内联图像协议渲染."""
-        if isinstance(source, ImageSource):
-            image = source.image.convert("RGB")
-            plan = _build_fit_plan(config, image.width, image.height)
-            display_cols = max(1, plan.display_cols)
-        elif isinstance(source, MatrixSource):
-            size = len(source.matrix)
-            scale, display_cols, _display_rows = _resolve_integer_scale(config, size)
-            image = _matrix_to_image(source.matrix, scale, "RGB")
-        else:
-            raise TypeError(f"Unsupported source type: {type(source)}")
-
-        png_data = image.to_png_bytes()
-        b64_data = base64.b64encode(png_data).decode("ascii")
-        payload_seq = f"\x1b]1337;File=inline=1;width={display_cols};height=auto;preserveAspectRatio=1:{b64_data}\x07"
-
-        if _should_tmux_wrap(config):
-            yield _tmux_wrap(payload_seq)
-            return
-
-        yield payload_seq
+    def _extra_params(self) -> str:
+        """追加 preserveAspectRatio 参数."""
+        return ";preserveAspectRatio=1"
 
 
 class SixelRenderer:
@@ -410,7 +396,7 @@ class SixelRenderer:
         width, height = image.width, image.height
         bits = _threshold_to_bits(image, threshold=128)
 
-        header = f'\x1bP9q"1;1;{width};{height}#0;2;100;100;100#1;2;0;0;0'
+        header = f'\x1bP9;0q"1;1;{width};{height}#0;2;100;100;100#1;2;0;0;0'
         footer = "\x1b\\"
 
         body = _sixel_encode_mono(bits, width, height)

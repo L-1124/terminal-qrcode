@@ -251,7 +251,7 @@ def test_sixel_renderer_output():
     """验证 Sixel 协议输出起止转义序列."""
     matrix = _build_qr_like_matrix(size=21)
     output = "".join(SixelRenderer().render(MatrixSource(matrix), RenderConfig()))
-    assert output.startswith("\x1bP9q")
+    assert output.startswith("\x1bP9;0q")
     assert output.endswith("\x1b\\")
 
 
