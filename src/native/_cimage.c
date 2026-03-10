@@ -283,13 +283,11 @@ decode_png_to_mode_pixels(
         png_error(png_ptr, "OOM");
     }
 
-    Py_BEGIN_ALLOW_THREADS
     for (y = 0; y < height; y++) {
         rows[y] = dst + (size_t)y * (size_t)width * (size_t)channels;
     }
 
     png_read_image(png_ptr, rows);
-    Py_END_ALLOW_THREADS
     png_read_end(png_ptr, NULL);
 
     PyMem_Free(rows);
@@ -1303,6 +1301,11 @@ cimage_qr_matrix_to_luma(PyObject *self, PyObject *args)
         PyErr_SetString(PyExc_ValueError, "Generated QR matrix is empty.");
         return NULL;
     }
+    if (height != width) {
+        Py_DECREF(rows_fast);
+        PyErr_SetString(PyExc_ValueError, "QR matrix must be a bool square matrix.");
+        return NULL;
+    }
 
     pixels = PyBytes_FromStringAndSize(NULL, width * height);
     if (pixels == NULL) {
@@ -1325,19 +1328,21 @@ cimage_qr_matrix_to_luma(PyObject *self, PyObject *args)
             Py_DECREF(row_fast);
             Py_DECREF(rows_fast);
             Py_DECREF(pixels);
-            PyErr_SetString(PyExc_ValueError, "Generated QR matrix rows have inconsistent width.");
+            PyErr_SetString(PyExc_ValueError, "QR matrix must be a bool square matrix.");
             return NULL;
         }
 
         for (x = 0; x < width; x++) {
             PyObject *item = PySequence_Fast_GET_ITEM(row_fast, x);
-            int dark = PyObject_IsTrue(item);
-            if (dark < 0) {
+            int dark;
+            if (!PyBool_Check(item)) {
                 Py_DECREF(row_fast);
                 Py_DECREF(rows_fast);
                 Py_DECREF(pixels);
+                PyErr_SetString(PyExc_ValueError, "QR matrix must contain only bool values.");
                 return NULL;
             }
+            dark = (item == Py_True);
             dst[y * width + x] = dark ? 0 : 255;
         }
         Py_DECREF(row_fast);
@@ -1837,6 +1842,33 @@ append_or_merge_center(FinderCenter *centers, int *center_count, int center_cap,
     return 0;
 }
 
+static int
+ensure_center_capacity(FinderCenter **centers, int *center_cap, int center_count)
+{
+    FinderCenter *new_centers;
+    int new_cap;
+
+    if (center_count < *center_cap) {
+        return 0;
+    }
+    if (*center_cap > (INT_MAX / 2)) {
+        PyErr_SetString(PyExc_OverflowError, "Too many finder candidates.");
+        return -1;
+    }
+
+    new_cap = *center_cap * 2;
+    new_centers = (FinderCenter *)PyMem_Realloc(*centers, (size_t)new_cap * sizeof(FinderCenter));
+    if (new_centers == NULL) {
+        PyErr_NoMemory();
+        return -1;
+    }
+
+    memset(new_centers + *center_cap, 0, (size_t)(new_cap - *center_cap) * sizeof(FinderCenter));
+    *centers = new_centers;
+    *center_cap = new_cap;
+    return 0;
+}
+
 static PyObject *
 cimage_find_finder_centers(PyObject *self, PyObject *args)
 {
@@ -1876,7 +1908,6 @@ cimage_find_finder_centers(PyObject *self, PyObject *args)
         return PyErr_NoMemory();
     }
 
-    Py_BEGIN_ALLOW_THREADS
     for (y = 1; y < height - 1; y += 2) {
         for (x = 1; x < width - 1; x++) {
             int hruns[5];
@@ -1912,15 +1943,22 @@ cimage_find_finder_centers(PyObject *self, PyObject *args)
             hmodule = (double)total / 7.0;
             vmodule = ((double)vruns[0] + vruns[1] + vruns[2] + vruns[3] + vruns[4]) / 7.0;
             module = (hmodule + vmodule) * 0.5;
-            if (append_or_merge_center(centers, &center_count, center_cap, (double)x, (double)y, module) < 0) {
-                /* Too many candidates, skip for now to avoid GIL issues in loop */
+            if (ensure_center_capacity(&centers, &center_cap, center_count) < 0) {
+                PyMem_Free(centers);
+                PyBuffer_Release(&in_buf);
+                return NULL;
             }
-            
+            if (append_or_merge_center(centers, &center_count, center_cap, (double)x, (double)y, module) < 0) {
+                PyMem_Free(centers);
+                PyBuffer_Release(&in_buf);
+                PyErr_SetString(PyExc_RuntimeError, "Failed to record finder candidate.");
+                return NULL;
+            }
+
             /* Optimization: skip known module width */
             x += (int)(module * 2.0);
         }
     }
-    Py_END_ALLOW_THREADS
 
     if (center_count < 3) {
         PyMem_Free(centers);
@@ -1971,8 +2009,8 @@ cimage_sample_matrix_affine(PyObject *self, PyObject *args)
     uint8_t *dst;
     int y, x;
     int radius;
-    int32_t tlx, tly, hx, hy, vx, vy;
-    int32_t step;
+    int64_t tlx, tly, hx, hy, vx, vy;
+    int64_t step;
 
     (void)self;
 
@@ -2005,29 +2043,31 @@ cimage_sample_matrix_affine(PyObject *self, PyObject *args)
     dst = (uint8_t *)PyBytes_AS_STRING(out);
 
     /* Convert to fixed point (16.16) */
-    step = (int32_t)((1.0 / ((double)size - 7.0)) * 65536.0);
-    tlx = (int32_t)((tlx_d - 3.5 / ((double)size - 7.0) * hx_d - 3.5 / ((double)size - 7.0) * vx_d) * 65536.0);
-    tly = (int32_t)((tly_d - 3.5 / ((double)size - 7.0) * hy_d - 3.5 / ((double)size - 7.0) * vy_d) * 65536.0);
-    hx = (int32_t)(hx_d * 65536.0);
-    hy = (int32_t)(hy_d * 65536.0);
-    vx = (int32_t)(vx_d * 65536.0);
-    vy = (int32_t)(vy_d * 65536.0);
+    step = (int64_t)((1.0 / ((double)size - 7.0)) * 65536.0);
+    tlx = (int64_t)((tlx_d - 3.5 / ((double)size - 7.0) * hx_d - 3.5 / ((double)size - 7.0) * vx_d) * 65536.0);
+    tly = (int64_t)((tly_d - 3.5 / ((double)size - 7.0) * hy_d - 3.5 / ((double)size - 7.0) * vy_d) * 65536.0);
+    hx = (int64_t)(hx_d * 65536.0);
+    hy = (int64_t)(hy_d * 65536.0);
+    vx = (int64_t)(vx_d * 65536.0);
+    vy = (int64_t)(vy_d * 65536.0);
 
     Py_BEGIN_ALLOW_THREADS
     for (y = 0; y < size; y++) {
         /* Line start point in fixed point */
-        int32_t line_x = tlx + (y * vx * step >> 16);
-        int32_t line_y = tly + (y * vy * step >> 16);
-        
+        int64_t line_x = tlx + ((((int64_t)y * vx) * step) >> 16);
+        int64_t line_y = tly + ((((int64_t)y * vy) * step) >> 16);
+
         for (x = 0; x < size; x++) {
             /* Current point in fixed point */
-            int32_t cur_fx = line_x + (x * hx * step >> 16);
-            int32_t cur_fy = line_y + (x * hy * step >> 16);
-            
+            int64_t cur_fx = line_x + ((((int64_t)x * hx) * step) >> 16);
+            int64_t cur_fy = line_y + ((((int64_t)x * hy) * step) >> 16);
+
             /* Round to nearest integer */
-            int cx = (cur_fx + 32768) >> 16;
-            int cy = (cur_fy + 32768) >> 16;
-            
+            int64_t cx64 = (cur_fx + 32768) >> 16;
+            int64_t cy64 = (cur_fy + 32768) >> 16;
+            int cx = (cx64 < INT_MIN) ? INT_MIN : (cx64 > INT_MAX ? INT_MAX : (int)cx64);
+            int cy = (cy64 < INT_MIN) ? INT_MIN : (cy64 > INT_MAX ? INT_MAX : (int)cy64);
+
             int yy, xx;
             int black = 0;
             int total = 0;

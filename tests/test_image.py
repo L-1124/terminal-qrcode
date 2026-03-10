@@ -1,11 +1,13 @@
 """SimpleImage 模块的测试集."""
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import pytest
 
 import terminal_qrcode.simple_image as simple_image
+from terminal_qrcode import _cimage
 from terminal_qrcode.simple_image import SimpleImage
 
 
@@ -16,6 +18,51 @@ def _png_fixture_bytes() -> bytes:
         b"\x00\x00\x00\x0cIDATx\x9ccdbf\x01\x00\x00\x18\x00\x07\x10\xe7'\xc4"
         b"\x00\x00\x00\x00IEND\xaeB`\x82"
     )
+
+
+def _flatten_matrix_bits(matrix: list[list[bool]], scale: int = 1) -> bytes:
+    """将布尔矩阵按整数 scale 栅格化为 0/1 bit 图."""
+    rows: list[int] = []
+    for row in matrix:
+        scaled_row: list[int] = []
+        for cell in row:
+            scaled_row.extend([1 if cell else 0] * scale)
+        for _ in range(scale):
+            rows.extend(scaled_row)
+    return bytes(rows)
+
+
+def _finder_stamp() -> list[list[bool]]:
+    """构造 7x7 Finder 样式矩阵."""
+    stamp = [[False for _ in range(7)] for _ in range(7)]
+    for y in range(7):
+        for x in range(7):
+            if x in (0, 6) or y in (0, 6):
+                stamp[y][x] = True
+            elif x in (1, 5) or y in (1, 5):
+                stamp[y][x] = False
+            else:
+                stamp[y][x] = True
+    return stamp
+
+
+def _finder_grid_bits(count_x: int, count_y: int, gap: int = 2) -> tuple[bytes, int, int]:
+    """构造包含大量 Finder 候选的 0/1 bit 图."""
+    stamp = _finder_stamp()
+    tile = 7 + gap
+    width = count_x * tile
+    height = count_y * tile
+    bits = [[False for _ in range(width)] for _ in range(height)]
+
+    for gy in range(count_y):
+        for gx in range(count_x):
+            ox = gx * tile
+            oy = gy * tile
+            for sy in range(7):
+                for sx in range(7):
+                    bits[oy + sy][ox + sx] = stamp[sy][sx]
+
+    return _flatten_matrix_bits(bits), width, height
 
 
 def test_open_bmp_unsupported_format(tmp_path):
@@ -42,6 +89,13 @@ def test_open_png_magic_ignores_file_suffix(monkeypatch, tmp_path):
     img = SimpleImage.open(path)
     assert img.mode == "RGB"
     assert img.getpixel((0, 0)) == (1, 2, 3)
+
+
+def test_from_bytes_rejects_corrupted_png_data():
+    """验证损坏 PNG 输入会抛出 Python 异常而不是崩溃."""
+    broken_png = _png_fixture_bytes()[:-10]
+    with pytest.raises(ValueError, match="PNG decode failed"):
+        SimpleImage.from_bytes(broken_png)
 
 
 def test_convert_rgba_to_l_ignores_alpha_channel():
@@ -93,3 +147,64 @@ def test_from_qr_matrix_propagates_cimage_error(monkeypatch):
     monkeypatch.setattr(simple_image._cimage, "qr_matrix_to_luma", _raise)
     with pytest.raises(ValueError, match="bad matrix"):
         SimpleImage.from_qr_matrix([[True]])
+
+
+def test_qr_matrix_to_luma_rejects_rectangular_matrix():
+    """验证底层 qr_matrix_to_luma 会拒绝矩形矩阵."""
+    with pytest.raises(ValueError, match="bool square matrix"):
+        _cimage.qr_matrix_to_luma([[True, False], [False, True], [True, False]])
+
+
+def test_qr_matrix_to_luma_rejects_non_bool_cells():
+    """验证底层 qr_matrix_to_luma 会拒绝非 bool 元素."""
+    payload: Any = [[True, False], [1, True]]
+    with pytest.raises(ValueError, match="only bool values"):
+        _cimage.qr_matrix_to_luma(payload)
+
+
+def test_qr_matrix_to_luma_accepts_bool_square_matrix():
+    """验证底层 qr_matrix_to_luma 接受合法布尔方阵."""
+    width, height, pixels = _cimage.qr_matrix_to_luma([[True, False], [False, True]])
+    assert (width, height) == (2, 2)
+    assert pixels == bytes([0, 255, 255, 0])
+
+
+def test_sample_matrix_affine_matches_exact_axis_aligned_grid():
+    """验证仿射采样在正常轴对齐网格下可还原原始矩阵."""
+    matrix = [
+        [True, False, True, False, True, False, True, False, True],
+        [False, True, False, True, False, True, False, True, False],
+        [True, True, False, False, True, True, False, False, True],
+        [False, False, True, True, False, False, True, True, False],
+        [True, False, False, True, True, False, False, True, True],
+        [False, True, True, False, False, True, True, False, False],
+        [True, False, True, False, True, False, True, False, True],
+        [False, True, False, True, False, True, False, True, False],
+        [True, True, True, False, False, False, True, True, True],
+    ]
+    scale = 5
+    bits = _flatten_matrix_bits(matrix, scale=scale)
+    size = len(matrix)
+    tl = 3 * scale + (scale - 1) / 2
+    h_span = (size - 7) * scale
+    sampled = _cimage.sample_matrix_affine(bits, size * scale, size * scale, size, tl, tl, h_span, 0.0, 0.0, h_span, 1)
+    assert sampled == _flatten_matrix_bits(matrix)
+
+
+def test_sample_matrix_affine_handles_large_fixed_point_coordinates():
+    """验证仿射采样在大坐标参数下仍稳定返回."""
+    bits = bytes([1] * 64)
+    sampled = _cimage.sample_matrix_affine(bits, 8, 8, 177, 1_000_000.0, 1_000_000.0, 750_000.0, 0.0, 0.0, 750_000.0, 1)
+    assert len(sampled) == 177 * 177
+    assert set(sampled) == {1}
+
+
+def test_find_finder_centers_expands_candidate_capacity():
+    """验证 Finder 候选超过初始容量时仍能找到靠近底部的中心."""
+    bits, width, height = _finder_grid_bits(20, 20)
+    centers = _cimage.find_finder_centers(bits, width, height, 0.8)
+    assert centers is not None
+    tlx, tly, trx, try_, blx, bly = centers
+    assert tlx < 10 and tly < 10
+    assert trx > 150 and try_ < 20
+    assert blx < 20 and bly > 150
