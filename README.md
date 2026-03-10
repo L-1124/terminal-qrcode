@@ -3,6 +3,8 @@
 [![Python 3.10+](https://img.shields.io/badge/Python-3.10|3.11|3.12|3.13|3.14-blue)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/license-MIT-green.svg)](https://opensource.org/licenses/MIT)
 
+[English](./README.en.md) | 简体中文
+
 终端二维码图片渲染工具，支持图形协议、字符降级渲染和终端能力探测。
 
 ## 📦 安装
@@ -68,32 +70,21 @@ console.print(generate("https://github.com"))
 ## 🔧 CLI
 
 ```bash
-uv run python scripts/cli.py <image_path> [options]
-```
+# 1. 直接根据文本生成二维码 (默认行为)
+$ terminal_qrcode "https://github.com"
 
-仅探测当前终端能力：
-
-```bash
-uv run python scripts/cli.py --detect
-```
-
-常见渲染选项：
-
-```bash
-uv run python scripts/cli.py qrcode.png --renderer halfblock
-uv run python scripts/cli.py qrcode.png --renderer auto
+# 2. 渲染已有图片
+$ terminal_qrcode -i qrcode.png
 ```
 
 ## 🛠️ 本地开发
 
 ```bash
-uv sync
-```
+# 安装开发依赖
+$ uv sync
 
-Windows
-
-```bash
-uv run --no-project python scripts/install-dev.py
+# 运行 Windows 开发安装脚本
+$ uv run --no-project python scripts/install-dev.py
 uv sync
 ```
 
