@@ -229,7 +229,7 @@ def _resolve_qr_source(request: RenderRequest, capability: TerminalCapability) -
 
     if isinstance(payload, list):
         _validate_matrix_shape(payload)
-        return MatrixSource(matrix=[list(row) for row in payload])
+        return MatrixSource(matrix=_pad_border([list(row) for row in payload], config.qr.border))
 
     image_payload = _to_simple_image(payload)
     matrix = _restore_qr_matrix(image_payload, config)
