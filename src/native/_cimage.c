@@ -6,6 +6,7 @@
 #include <string.h>
 #include <stdio.h>
 #include <math.h>
+#include <limits.h>
 
 #include <png.h>
 #include <turbojpeg.h>
@@ -25,6 +26,51 @@ channels_from_mode(const char *mode)
         return 4;
     }
     return -1;
+}
+
+static int
+compare_ints(const void *a, const void *b)
+{
+    int lhs = *(const int *)a;
+    int rhs = *(const int *)b;
+    return (lhs > rhs) - (lhs < rhs);
+}
+
+static int
+append_run_length(int **runs_ptr, int *run_count_ptr, int *run_cap_ptr, int run)
+{
+    int *new_runs;
+
+    if (*run_count_ptr >= *run_cap_ptr) {
+        int new_cap = (*run_cap_ptr < INT_MAX / 2) ? (*run_cap_ptr * 2) : INT_MAX;
+        if (new_cap <= *run_cap_ptr) {
+            PyErr_SetString(PyExc_OverflowError, "Too many run lengths.");
+            return -1;
+        }
+        new_runs = (int *)PyMem_Realloc(*runs_ptr, sizeof(int) * (size_t)new_cap);
+        if (new_runs == NULL) {
+            PyErr_NoMemory();
+            return -1;
+        }
+        *runs_ptr = new_runs;
+        *run_cap_ptr = new_cap;
+    }
+
+    (*runs_ptr)[(*run_count_ptr)++] = run;
+    return 0;
+}
+
+static void
+fill_rgb_repeat(uint8_t *dst, int repeat, uint8_t r, uint8_t g, uint8_t b)
+{
+    int i;
+
+    for (i = 0; i < repeat; i++) {
+        dst[0] = r;
+        dst[1] = g;
+        dst[2] = b;
+        dst += 3;
+    }
 }
 
 static int
@@ -551,23 +597,23 @@ cimage_resize_nearest(PyObject *self, PyObject *args)
     }
 
     for (x = 0; x < dst_w; x++) {
-        map_x[x] = (x * src_w) / dst_w;
+        map_x[x] = (int)(((int64_t)x * src_w) / dst_w);
         if (map_x[x] >= src_w) map_x[x] = src_w - 1;
     }
     for (y = 0; y < dst_h; y++) {
-        map_y[y] = (y * src_h) / dst_h;
+        map_y[y] = (int)(((int64_t)y * src_h) / dst_h);
         if (map_y[y] >= src_h) map_y[y] = src_h - 1;
     }
 
     Py_BEGIN_ALLOW_THREADS
     for (y = 0; y < dst_h; y++) {
         int sy = map_y[y];
-        int src_row_base = sy * src_w;
-        int dst_row_base = y * dst_w;
+        Py_ssize_t src_row_base = (Py_ssize_t)sy * src_w;
+        Py_ssize_t dst_row_base = (Py_ssize_t)y * dst_w;
         for (x = 0; x < dst_w; x++) {
             int sx = map_x[x];
-            int src_idx = (src_row_base + sx) * channels;
-            int dst_idx = (dst_row_base + x) * channels;
+            Py_ssize_t src_idx = (src_row_base + sx) * channels;
+            Py_ssize_t dst_idx = (dst_row_base + x) * channels;
             memcpy(dst + dst_idx, src + src_idx, (size_t)channels);
         }
     }
@@ -888,19 +934,22 @@ threshold_to_bits_raw(
             dst[i] = src[i] < threshold ? 1 : 0;
         }
     } else if (channels == 3) {
+        const uint8_t *sp = src;
         for (i = 0; i < pixels; i++) {
-            const uint8_t *sp = src + i * 3;
             int gray = (299 * sp[0] + 587 * sp[1] + 114 * sp[2]) / 1000;
             dst[i] = gray < threshold ? 1 : 0;
+            sp += 3;
         }
     } else {
+        const uint8_t *sp = src;
         for (i = 0; i < pixels; i++) {
-            const uint8_t *sp = src + i * 4;
-            /* Branchless alpha check: if sp[3] <= 127, mask is 0, else mask is -1 (all 1s) */
-            int32_t is_transparent = ((int32_t)sp[3] - 128) >> 31;
-            int gray = (299 * sp[0] + 587 * sp[1] + 114 * sp[2]) / 1000;
-            int bit = (gray < threshold);
-            dst[i] = (uint8_t)(bit & ~is_transparent);
+            if (sp[3] <= 127) {
+                dst[i] = 0;
+            } else {
+                int gray = (299 * sp[0] + 587 * sp[1] + 114 * sp[2]) / 1000;
+                dst[i] = gray < threshold ? 1 : 0;
+            }
+            sp += 4;
         }
     }
     Py_END_ALLOW_THREADS
@@ -992,11 +1041,11 @@ typedef struct {
 } SixelStream;
 
 static int
-ss_append(SixelStream *ss, const char *data, size_t len)
+ss_reserve(SixelStream *ss, size_t extra)
 {
-    if (ss->size + len >= ss->cap) {
+    if (ss->size + extra >= ss->cap) {
         size_t new_cap = ss->cap == 0 ? 16384 : ss->cap * 2;
-        while (new_cap < ss->size + len + 1) {
+        while (new_cap < ss->size + extra + 1) {
             new_cap *= 2;
         }
         char *new_buf = (char *)PyMem_Realloc(ss->buf, new_cap);
@@ -1005,6 +1054,15 @@ ss_append(SixelStream *ss, const char *data, size_t len)
         }
         ss->buf = new_buf;
         ss->cap = new_cap;
+    }
+    return 0;
+}
+
+static int
+ss_append(SixelStream *ss, const char *data, size_t len)
+{
+    if (ss_reserve(ss, len) < 0) {
+        return -1;
     }
     memcpy(ss->buf + ss->size, data, len);
     ss->size += len;
@@ -1025,12 +1083,29 @@ ss_append_rle(SixelStream *ss, const char *buf, int len)
         if (count >= 4) {
             const char *prefix = SIXEL_RLE_LOOKUP[count];
             size_t plen = strlen(prefix);
-            if (ss_append(ss, prefix, plen) < 0) return -1;
-            if (ss_append(ss, &ch, 1) < 0) return -1;
+            if (ss_reserve(ss, plen + 1) < 0) return -1;
+            memcpy(ss->buf + ss->size, prefix, plen);
+            ss->size += plen;
+            ss->buf[ss->size++] = ch;
+            ss->buf[ss->size] = '\0';
         } else {
-            for (int j = 0; j < count; j++) {
-                if (ss_append(ss, &ch, 1) < 0) return -1;
+            int literal_start = i;
+            int literal_len = count;
+            while (i + literal_len < len) {
+                char next_ch = buf[i + literal_len];
+                int next_count = 1;
+                while (i + literal_len + next_count < len
+                       && buf[i + literal_len + next_count] == next_ch
+                       && next_count < 255) {
+                    next_count++;
+                }
+                if (next_count >= 4) {
+                    break;
+                }
+                literal_len += next_count;
             }
+            if (ss_append(ss, buf + literal_start, (size_t)literal_len) < 0) return -1;
+            count = literal_len;
         }
         i += count;
     }
@@ -1146,7 +1221,8 @@ cimage_matrix_to_image(PyObject *self, PyObject *args)
     PyObject *out;
     const uint8_t *src;
     uint8_t *dst;
-    int my, mx, dy, dx;
+    int my, mx, dy, repeat;
+    Py_ssize_t dst_row_bytes;
     uint8_t white_pixel[4];
     uint8_t black_pixel[4];
 
@@ -1197,6 +1273,7 @@ cimage_matrix_to_image(PyObject *self, PyObject *args)
 
     src = (const uint8_t *)in_buf.buf;
     dst = (uint8_t *)PyBytes_AS_STRING(out);
+    dst_row_bytes = (Py_ssize_t)dst_w * channels;
 
     memset(white_pixel, 255, (size_t)channels);
     memset(black_pixel, 0, (size_t)channels);
@@ -1209,44 +1286,45 @@ cimage_matrix_to_image(PyObject *self, PyObject *args)
         memcpy(&bp, black_pixel, 4);
 
         for (my = 0; my < src_h; my++) {
+            uint32_t *row0 = (uint32_t *)(dst + (Py_ssize_t)my * scale * dst_row_bytes);
             for (mx = 0; mx < src_w; mx++) {
                 uint8_t val = src[(Py_ssize_t)my * src_w + mx];
                 uint32_t p = val ? bp : wp;
-                for (dy = 0; dy < scale; dy++) {
-                    uint32_t *dst_row = (uint32_t *)(dst + (Py_ssize_t)(my * scale + dy) * dst_w * 4);
-                    for (dx = 0; dx < scale; dx++) {
-                        dst_row[mx * scale + dx] = p;
-                    }
+                uint32_t *dst_cell = row0 + (Py_ssize_t)mx * scale;
+                for (repeat = 0; repeat < scale; repeat++) {
+                    dst_cell[repeat] = p;
                 }
+            }
+            for (dy = 1; dy < scale; dy++) {
+                memcpy(dst + ((Py_ssize_t)my * scale + dy) * dst_row_bytes, row0, (size_t)dst_row_bytes);
             }
         }
     } else if (channels == 3) {
         for (my = 0; my < src_h; my++) {
+            uint8_t *row0 = dst + (Py_ssize_t)my * scale * dst_row_bytes;
             for (mx = 0; mx < src_w; mx++) {
                 uint8_t val = src[(Py_ssize_t)my * src_w + mx];
                 const uint8_t *p = val ? black_pixel : white_pixel;
-                uint8_t r = p[0], g = p[1], b = p[2];
-                for (dy = 0; dy < scale; dy++) {
-                    uint8_t *dst_ptr = dst + ((Py_ssize_t)(my * scale + dy) * dst_w + (Py_ssize_t)mx * scale) * 3;
-                    for (dx = 0; dx < scale; dx++) {
-                        dst_ptr[0] = r; dst_ptr[1] = g; dst_ptr[2] = b;
-                        dst_ptr += 3;
-                    }
-                }
+                fill_rgb_repeat(row0 + (Py_ssize_t)mx * scale * 3, scale, p[0], p[1], p[2]);
+            }
+            for (dy = 1; dy < scale; dy++) {
+                memcpy(dst + ((Py_ssize_t)my * scale + dy) * dst_row_bytes, row0, (size_t)dst_row_bytes);
             }
         }
     } else {
         for (my = 0; my < src_h; my++) {
+            uint8_t *row0 = dst + (Py_ssize_t)my * scale * dst_row_bytes;
             for (mx = 0; mx < src_w; mx++) {
                 uint8_t val = src[(Py_ssize_t)my * src_w + mx];
                 const uint8_t *pixel = val ? black_pixel : white_pixel;
-                for (dy = 0; dy < scale; dy++) {
-                    Py_ssize_t row_base = (Py_ssize_t)(my * scale + dy) * dst_w * channels;
-                    for (dx = 0; dx < scale; dx++) {
-                        Py_ssize_t col_base = (Py_ssize_t)(mx * scale + dx) * channels;
-                        memcpy(dst + row_base + col_base, pixel, (size_t)channels);
-                    }
+                uint8_t *dst_ptr = row0 + (Py_ssize_t)mx * scale * channels;
+                for (repeat = 0; repeat < scale; repeat++) {
+                    memcpy(dst_ptr, pixel, (size_t)channels);
+                    dst_ptr += channels;
                 }
+            }
+            for (dy = 1; dy < scale; dy++) {
+                memcpy(dst + ((Py_ssize_t)my * scale + dy) * dst_row_bytes, row0, (size_t)dst_row_bytes);
             }
         }
     }
@@ -1536,7 +1614,7 @@ cimage_estimate_module_size(PyObject *self, PyObject *args)
     int run_count = 0;
     int run_cap = 256;
     int *runs;
-    int i, j;
+    int i;
     double module_size = -1.0;
 
     (void)self;
@@ -1578,34 +1656,20 @@ cimage_estimate_module_size(PyObject *self, PyObject *args)
             if (cur == prev) {
                 run++;
             } else {
-                if (run_count >= run_cap) {
-                    int *new_runs;
-                    run_cap *= 2;
-                    new_runs = (int *)PyMem_Realloc(runs, sizeof(int) * (size_t)run_cap);
-                    if (new_runs == NULL) {
-                        PyMem_Free(runs);
-                        PyBuffer_Release(&in_buf);
-                        return PyErr_NoMemory();
-                    }
-                    runs = new_runs;
+                if (append_run_length(&runs, &run_count, &run_cap, run) < 0) {
+                    PyMem_Free(runs);
+                    PyBuffer_Release(&in_buf);
+                    return NULL;
                 }
-                runs[run_count++] = run;
                 run = 1;
                 prev = cur;
             }
         }
-        if (run_count >= run_cap) {
-            int *new_runs;
-            run_cap *= 2;
-            new_runs = (int *)PyMem_Realloc(runs, sizeof(int) * (size_t)run_cap);
-            if (new_runs == NULL) {
-                PyMem_Free(runs);
-                PyBuffer_Release(&in_buf);
-                return PyErr_NoMemory();
-            }
-            runs = new_runs;
+        if (append_run_length(&runs, &run_count, &run_cap, run) < 0) {
+            PyMem_Free(runs);
+            PyBuffer_Release(&in_buf);
+            return NULL;
         }
-        runs[run_count++] = run;
     }
 
     for (i = 0; i < 5; i++) {
@@ -1617,34 +1681,20 @@ cimage_estimate_module_size(PyObject *self, PyObject *args)
             if (cur == prev) {
                 run++;
             } else {
-                if (run_count >= run_cap) {
-                    int *new_runs;
-                    run_cap *= 2;
-                    new_runs = (int *)PyMem_Realloc(runs, sizeof(int) * (size_t)run_cap);
-                    if (new_runs == NULL) {
-                        PyMem_Free(runs);
-                        PyBuffer_Release(&in_buf);
-                        return PyErr_NoMemory();
-                    }
-                    runs = new_runs;
+                if (append_run_length(&runs, &run_count, &run_cap, run) < 0) {
+                    PyMem_Free(runs);
+                    PyBuffer_Release(&in_buf);
+                    return NULL;
                 }
-                runs[run_count++] = run;
                 run = 1;
                 prev = cur;
             }
         }
-        if (run_count >= run_cap) {
-            int *new_runs;
-            run_cap *= 2;
-            new_runs = (int *)PyMem_Realloc(runs, sizeof(int) * (size_t)run_cap);
-            if (new_runs == NULL) {
-                PyMem_Free(runs);
-                PyBuffer_Release(&in_buf);
-                return PyErr_NoMemory();
-            }
-            runs = new_runs;
+        if (append_run_length(&runs, &run_count, &run_cap, run) < 0) {
+            PyMem_Free(runs);
+            PyBuffer_Release(&in_buf);
+            return NULL;
         }
-        runs[run_count++] = run;
     }
 
     int filtered_count = 0;
@@ -1654,21 +1704,9 @@ cimage_estimate_module_size(PyObject *self, PyObject *args)
     }
 
     if (filtered_count > 0) {
-        for (i = 0; i < filtered_count - 1; i++) {
-            for (j = i + 1; j < filtered_count; j++) {
-                if (runs[i] > runs[j]) {
-                    int tmp = runs[i];
-                    runs[i] = runs[j];
-                    runs[j] = tmp;
-                }
-            }
-        }
+        qsort(runs, (size_t)filtered_count, sizeof(int), compare_ints);
         int median_count = filtered_count / 2;
         if (median_count == 0) median_count = 1;
-        int sum_lower = 0;
-        for (i = 0; i < median_count; i++) sum_lower += runs[i];
-        
-        // Use simpler median or average of lower half
         if (median_count % 2 == 1) {
             module_size = (double)runs[median_count / 2];
         } else {

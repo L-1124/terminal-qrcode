@@ -169,6 +169,190 @@ def test_qr_matrix_to_luma_accepts_bool_square_matrix():
     assert pixels == bytes([0, 255, 255, 0])
 
 
+def test_resize_nearest_preserves_expected_quadrants():
+    """验证最近邻缩放保持源像素象限分布."""
+    resized = _cimage.resize_nearest(bytes([10, 20, 30, 40]), "L", 2, 2, 4, 4)
+    assert resized == bytes(
+        [
+            10,
+            10,
+            20,
+            20,
+            10,
+            10,
+            20,
+            20,
+            30,
+            30,
+            40,
+            40,
+            30,
+            30,
+            40,
+            40,
+        ]
+    )
+
+
+def test_estimate_module_size_returns_scaled_checker_run_width():
+    """验证模块尺寸估计在规则棋盘格上返回缩放后的 run 宽度."""
+    matrix = [[(x + y) % 2 == 0 for x in range(9)] for y in range(9)]
+    scale = 4
+    bits = _flatten_matrix_bits(matrix, scale=scale)
+    size = len(matrix) * scale
+    module_size = _cimage.estimate_module_size(bits, size, size, (0, 0, size, size))
+    assert module_size == pytest.approx(float(scale))
+
+
+def test_sixel_encode_mono_preserves_expected_rle_output():
+    """验证 sixel 单色编码的字面量与 RLE 输出保持稳定."""
+    assert _cimage.sixel_encode_mono(bytes([0, 1]), 2, 1) == "#0@?$#1?@-"
+    assert _cimage.sixel_encode_mono(bytes([1, 1, 1, 1]), 4, 1) == "#0!4?$#1!4@-"
+
+
+def test_matrix_to_image_expands_rows_sequentially_for_rgb_and_rgba():
+    """验证 matrix_to_image 在 RGB 和 RGBA 模式下保持像素展开结果."""
+    bits = bytes([0, 1, 1, 0])
+    rgb = _cimage.matrix_to_image(bits, 2, 2, 2, "RGB")
+    rgba = _cimage.matrix_to_image(bits, 2, 2, 2, "RGBA")
+
+    assert rgb == bytes(
+        [
+            255,
+            255,
+            255,
+            255,
+            255,
+            255,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            255,
+            255,
+            255,
+            255,
+            255,
+            255,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            255,
+            255,
+            255,
+            255,
+            255,
+            255,
+            0,
+            0,
+            0,
+            0,
+            0,
+            0,
+            255,
+            255,
+            255,
+            255,
+            255,
+            255,
+        ]
+    )
+    assert rgba == bytes(
+        [
+            255,
+            255,
+            255,
+            255,
+            255,
+            255,
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0,
+            0,
+            0,
+            255,
+            255,
+            255,
+            255,
+            255,
+            255,
+            255,
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0,
+            0,
+            0,
+            255,
+            255,
+            255,
+            255,
+            255,
+            255,
+            255,
+            255,
+            255,
+            0,
+            0,
+            0,
+            255,
+            0,
+            0,
+            0,
+            255,
+            255,
+            255,
+            255,
+            255,
+            255,
+            255,
+            255,
+            255,
+        ]
+    )
+
+
+def test_threshold_to_bits_respects_rgb_and_rgba_alpha_semantics():
+    """验证 threshold_to_bits 在 RGB 与 RGBA 下保持阈值和透明像素语义."""
+    rgb = _cimage.threshold_to_bits(bytes([0, 0, 0, 255, 255, 255]), "RGB", 2, 1, 128)
+    rgba = _cimage.threshold_to_bits(
+        bytes([0, 0, 0, 255, 0, 0, 0, 127, 255, 255, 255, 255]),
+        "RGBA",
+        3,
+        1,
+        128,
+    )
+
+    assert rgb == bytes([1, 0])
+    assert rgba == bytes([1, 0, 0])
+
+
 def test_sample_matrix_affine_matches_exact_axis_aligned_grid():
     """验证仿射采样在正常轴对齐网格下可还原原始矩阵."""
     matrix = [

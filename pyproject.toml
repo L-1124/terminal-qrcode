@@ -22,6 +22,7 @@ dev = [
 integration = [
   "pillow>=12.1.1",
   "qrcode>=8.2",
+  "rich>=14.3.3",
 ]
 lint = [
   "pre-commit>=4.5.1",
