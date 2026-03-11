@@ -51,9 +51,6 @@ def _intercept_unmocked_tty_ops(monkeypatch):
     # 确保布局算法与绘制结果在测试集中百分之百确定。
 
     # 让 layout 模块直接继承拦截钩子，如果未在测试中局部 mock 则也直接报错
-    try:
-        from terminal_qrcode import layout
+    from terminal_qrcode import _layout
 
-        monkeypatch.setattr(layout, "get_terminal_size", _block_get_terminal_size)
-    except ImportError:
-        pass
+    monkeypatch.setattr(_layout, "get_terminal_size", _block_get_terminal_size)

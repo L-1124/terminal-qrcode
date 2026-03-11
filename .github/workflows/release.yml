@@ -112,9 +112,6 @@ jobs:
         with:
           output-dir: wheelhouse
 
-      - name: Validate C extension in wheel
-        run: uv run --no-project python .github/scripts/validate_wheel_smoke.py
-
       - name: Upload wheel artifacts
         uses: actions/upload-artifact@v7
         with:

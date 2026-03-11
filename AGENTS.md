@@ -12,7 +12,7 @@
 ## Setup commands
 
 - 本地开发：`uv sync`
-- 运行 CLI：`uv run terminal_qrcode --help`
+- 运行 CLI：`uv run terminal-qrcode --help`
 
 ## C extension
 

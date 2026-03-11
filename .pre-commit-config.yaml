@@ -28,7 +28,7 @@ repos:
         entry: uv run ruff check
         language: system
         stages:
-          - commit
+          - pre-commit
         files: \.(py|pyi)$
         args: [--fix]
 
@@ -37,7 +37,7 @@ repos:
         entry: uv run ruff format
         language: system
         stages:
-          - commit
+          - pre-commit
         files: \.(py|pyi)$
 
       - id: pyrefly
@@ -46,7 +46,7 @@ repos:
         language: system
         pass_filenames: true
         stages:
-          - commit
+          - pre-commit
         files: \.(py|pyi)$
 
       - id: testing
@@ -54,6 +54,6 @@ repos:
         language: system
         entry: uv run pytest
         stages:
-          - commit
+          - pre-commit
         pass_filenames: false
         files: \.(py|pyi)$
