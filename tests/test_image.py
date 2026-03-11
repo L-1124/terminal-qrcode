@@ -7,7 +7,7 @@ from unittest.mock import patch
 import pytest
 
 import terminal_qrcode._simple_image as simple_image
-from terminal_qrcode import _cimage
+from terminal_qrcode import _cimage, _crestore
 from terminal_qrcode._simple_image import SimpleImage
 
 
@@ -200,7 +200,7 @@ def test_estimate_module_size_returns_scaled_checker_run_width():
     scale = 4
     bits = _flatten_matrix_bits(matrix, scale=scale)
     size = len(matrix) * scale
-    module_size = _cimage.estimate_module_size(bits, size, size, (0, 0, size, size))
+    module_size = _crestore.estimate_module_size(bits, size, size, (0, 0, size, size))
     assert module_size == pytest.approx(float(scale))
 
 
@@ -371,14 +371,18 @@ def test_sample_matrix_affine_matches_exact_axis_aligned_grid():
     size = len(matrix)
     tl = 3 * scale + (scale - 1) / 2
     h_span = (size - 7) * scale
-    sampled = _cimage.sample_matrix_affine(bits, size * scale, size * scale, size, tl, tl, h_span, 0.0, 0.0, h_span, 1)
+    sampled = _crestore.sample_matrix_affine(
+        bits, size * scale, size * scale, size, tl, tl, h_span, 0.0, 0.0, h_span, 1
+    )
     assert sampled == _flatten_matrix_bits(matrix)
 
 
 def test_sample_matrix_affine_handles_large_fixed_point_coordinates():
     """验证仿射采样在大坐标参数下仍稳定返回."""
     bits = bytes([1] * 64)
-    sampled = _cimage.sample_matrix_affine(bits, 8, 8, 177, 1_000_000.0, 1_000_000.0, 750_000.0, 0.0, 0.0, 750_000.0, 1)
+    sampled = _crestore.sample_matrix_affine(
+        bits, 8, 8, 177, 1_000_000.0, 1_000_000.0, 750_000.0, 0.0, 0.0, 750_000.0, 1
+    )
     assert len(sampled) == 177 * 177
     assert set(sampled) == {1}
 
@@ -386,7 +390,7 @@ def test_sample_matrix_affine_handles_large_fixed_point_coordinates():
 def test_find_finder_centers_expands_candidate_capacity():
     """验证 Finder 候选超过初始容量时仍能找到靠近底部的中心."""
     bits, width, height = _finder_grid_bits(20, 20)
-    centers = _cimage.find_finder_centers(bits, width, height, 0.8)
+    centers = _crestore.find_finder_centers(bits, width, height, 0.8)
     assert centers is not None
     tlx, tly, trx, try_, blx, bly = centers
     assert tlx < 10 and tly < 10

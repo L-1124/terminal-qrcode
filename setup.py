@@ -252,5 +252,12 @@ setup(
             extra_compile_args=_compile_args,
             extra_link_args=[],
         ),
+        Extension(
+            "terminal_qrcode._crestore",
+            ["src/terminal_qrcode/_crestore.c"],
+            define_macros=_macros,
+            extra_compile_args=_compile_args,
+            extra_link_args=[],
+        ),
     ],
 )

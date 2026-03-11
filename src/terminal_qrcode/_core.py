@@ -22,8 +22,8 @@ from ._contracts import (
     TerminalCapability,
     TerminalColorLevel,
 )
+from ._crestore import strict_restore_qr_matrix
 from ._layout import _pad_border
-from ._qr_restore import strict_restore_qr_matrix
 from ._renderers import (
     RendererRegistry,
     build_default_renderer_registry,

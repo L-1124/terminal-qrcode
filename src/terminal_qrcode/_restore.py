@@ -2,7 +2,7 @@
 
 import math
 
-from . import _cimage
+from . import _crestore
 from ._contracts import Matrix, RenderConfig
 from ._layout import _to_luma_bits
 from ._simple_image import SimpleImage
@@ -28,10 +28,10 @@ def _nearest_qr_size(n_est: float) -> int | None:
 
 def _infer_size_from_bbox(bits: bytes, width: int, height: int) -> int | None:
     """由黑像素包围盒推断 QR 模块尺寸."""
-    bbox = _cimage.find_black_bbox_bits(bits, width, height)
+    bbox = _crestore.find_black_bbox_bits(bits, width, height)
     if bbox is None:
         return None
-    module_size = _cimage.estimate_module_size(bits, width, height, bbox)
+    module_size = _crestore.estimate_module_size(bits, width, height, bbox)
     if module_size is None or module_size <= 0:
         return None
     left, top, right, bottom = bbox
@@ -42,10 +42,10 @@ def _infer_size_from_bbox(bits: bytes, width: int, height: int) -> int | None:
 
 def _infer_bbox_and_size(bits: bytes, width: int, height: int) -> tuple[tuple[int, int, int, int], int] | None:
     """推断黑像素包围盒及 QR 尺寸."""
-    bbox = _cimage.find_black_bbox_bits(bits, width, height)
+    bbox = _crestore.find_black_bbox_bits(bits, width, height)
     if bbox is None:
         return None
-    module_size = _cimage.estimate_module_size(bits, width, height, bbox)
+    module_size = _crestore.estimate_module_size(bits, width, height, bbox)
     if module_size is None or module_size <= 0:
         return None
     left, top, right, bottom = bbox
@@ -87,7 +87,7 @@ def _finder_score(matrix: Matrix) -> float:
         return 0.0
     # 将 Matrix 展平为 bytes 供 C 调用
     flat_bits = bytes(cell for row in matrix for cell in row)
-    return float(_cimage.score_finder(flat_bits, size))
+    return float(_crestore.score_finder(flat_bits, size))
 
 
 def _invert_matrix(matrix: Matrix) -> Matrix:
@@ -125,7 +125,7 @@ def strict_restore_qr_matrix(image: SimpleImage, config: RenderConfig) -> Matrix
     bbox_size = _infer_bbox_and_size(bits, luma.width, luma.height)
     if bbox_size is not None:
         bbox, size = bbox_size
-        sampled = _cimage.sample_matrix_3x3(bits, luma.width, luma.height, bbox, size)
+        sampled = _crestore.sample_matrix_3x3(bits, luma.width, luma.height, bbox, size)
         matrix_legacy: Matrix = []
         for i in range(size):
             start = i * size
@@ -139,9 +139,9 @@ def strict_restore_qr_matrix(image: SimpleImage, config: RenderConfig) -> Matrix
 
     finder_variance = max(0.1, config.qr.finder_variance)
     for bits_for_scan in (bits, _invert_bits(bits)):
-        centers = _cimage.find_finder_centers(bits_for_scan, luma.width, luma.height, finder_variance)
+        centers = _crestore.find_finder_centers(bits_for_scan, luma.width, luma.height, finder_variance)
         if centers is None:
-            centers = _cimage.find_finder_centers(bits_for_scan, luma.width, luma.height, finder_variance * 1.5)
+            centers = _crestore.find_finder_centers(bits_for_scan, luma.width, luma.height, finder_variance * 1.5)
         if centers is None:
             continue
 
@@ -162,7 +162,7 @@ def strict_restore_qr_matrix(image: SimpleImage, config: RenderConfig) -> Matrix
         if size is None:
             continue
 
-        sampled = _cimage.sample_matrix_affine(
+        sampled = _crestore.sample_matrix_affine(
             bits_for_scan,
             luma.width,
             luma.height,
